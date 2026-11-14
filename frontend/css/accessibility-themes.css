@@ -1,0 +1,72 @@
+:root {
+  --db-bg: #f5f7fa;
+  --db-card-bg: #ffffff;
+  --db-fg: #111827;
+  --db-border: #1f2937;
+  --db-accent: #0056b3;
+  --db-accent-fg: #ffffff;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--db-bg);
+  color: var(--db-fg);
+  line-height: 1.5;
+}
+
+body.db-theme-default {
+  --db-bg: #f5f7fa;
+  --db-card-bg: #ffffff;
+  --db-fg: #111827;
+  --db-border: #1f2937;
+  --db-accent: #0056b3;
+  --db-accent-fg: #ffffff;
+}
+
+body.db-theme-dark_yellow {
+  --db-bg: #000000;
+  --db-card-bg: #0a0a0a;
+  --db-fg: #ffff00;
+  --db-border: #ffff00;
+  --db-accent: #ffff00;
+  --db-accent-fg: #000000;
+}
+
+body.db-theme-light_yellow {
+  --db-bg: #ffffcc;
+  --db-card-bg: #ffff99;
+  --db-fg: #000000;
+  --db-border: #000000;
+  --db-accent: #000000;
+  --db-accent-fg: #ffff00;
+}
+
+body.db-theme-dark_white {
+  --db-bg: #000000;
+  --db-card-bg: #121212;
+  --db-fg: #ffffff;
+  --db-border: #ffffff;
+  --db-accent: #ffffff;
+  --db-accent-fg: #000000;
+}
+
+*:focus-visible {
+  outline: 4px solid #ff9800 !important;
+  outline-offset: 3px;
+}
+
+.page-wrapper {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+.alx-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}

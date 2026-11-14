@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>axe-core Automated WCAG 2.2 AA Audit</title>
+  <link rel="stylesheet" href="../css/accessibility-themes.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.10.2/axe.min.js"></script>
+</head>
+<body>
+  <h1>Digital Bridge WCAG 2.2 AA Verification Harness</h1>
+  <pre id="audit-output">Running axe-core...</pre>
+
+  <digital-bridge-onboarding id="audit-target"></digital-bridge-onboarding>
+
+  <script src="../js/i18n.js"></script>
+  <script src="../js/voice-engine.js"></script>
+  <script src="../js/state-manager.js"></script>
+  <script src="../js/digital-bridge-onboarding.js"></script>
+  <script>
+    window.addEventListener("load", async () => {
+      const results = await axe.run(document.getElementById("audit-target"), {
+        runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] }
+      });
+      const critical = results.violations.filter(v => ["critical", "serious"].includes(v.impact));
+      document.getElementById("audit-output").textContent = JSON.stringify({
+        total_violations: results.violations.length,
+        critical_or_serious: critical.length,
+        passes: results.passes.length,
+        violations: results.violations
+      }, null, 2);
+    });
+  </script>
+</body>
+</html>

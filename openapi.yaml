@@ -1,0 +1,160 @@
+openapi: 3.0.3
+info:
+  title: Digital Bridge Accessible Onboarding API
+  version: 1.0.0
+  description: Open-standard REST API for accessible learner registration, inclusive identity verification, and workplace accommodation matching.
+servers:
+  - url: http://localhost:8000/api/v1
+paths:
+  /onboarding/session:
+    post:
+      summary: Create or update an onboarding draft (Save & Resume)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingDraft'
+      responses:
+        '200':
+          description: Draft saved with resume token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+  /onboarding/session/{token}:
+    get:
+      summary: Resume an onboarding session via SMS/URL token
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Saved draft retrieved
+  /onboarding/submit:
+    post:
+      summary: Finalize accessible registration and career accommodation profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationPayload'
+      responses:
+        '201':
+          description: Learner registered successfully
+  /referrals/partner:
+    post:
+      summary: Partner organization assisted registration with learner consent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PartnerReferral'
+      responses:
+        '201':
+          description: Partner referral logged
+components:
+  schemas:
+    AccessibilityPreferences:
+      type: object
+      properties:
+        profile_type:
+          type: string
+          enum: [standard, blind, low_vision, physical_motor, low_literacy, deaf_hard_of_hearing]
+        contrast_mode:
+          type: string
+          enum: [default, dark_yellow, light_yellow, dark_white, custom]
+        custom_bg:
+          type: string
+          example: "#000000"
+        custom_fg:
+          type: string
+          example: "#FFFF00"
+        zoom_percent:
+          type: integer
+          minimum: 100
+          maximum: 200
+        tts_enabled:
+          type: boolean
+        stt_enabled:
+          type: boolean
+        language:
+          type: string
+          enum: [en, am, om, ti, so, ar]
+    IdentityVerification:
+      type: object
+      required: [route]
+      properties:
+        route:
+          type: string
+          enum: [national_kebele_id, refugee_id, alternative_doc, partner_referral]
+        document_number:
+          type: string
+        partner_org_name:
+          type: string
+        contact_channel:
+          type: string
+          enum: [sms, telegram, email, voice_callback]
+        contact_value:
+          type: string
+    OnboardingDraft:
+      type: object
+      properties:
+        token:
+          type: string
+        step:
+          type: integer
+        data:
+          type: object
+    SessionResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        resume_url:
+          type: string
+        sms_message:
+          type: string
+    RegistrationPayload:
+      type: object
+      required: [full_name, identity, preferences]
+      properties:
+        full_name:
+          type: string
+        preferred_language:
+          type: string
+        preferences:
+          $ref: '#/components/schemas/AccessibilityPreferences'
+        identity:
+          $ref: '#/components/schemas/IdentityVerification'
+        support_needs:
+          type: array
+          items:
+            type: string
+          description: Private functional accommodations (no medical proof required)
+        career_gateway:
+          type: object
+          properties:
+            seeking_work:
+              type: boolean
+            preferred_accommodations:
+              type: array
+              items:
+                type: string
+    PartnerReferral:
+      type: object
+      required: [partner_name, learner_name, learner_contact, consent_confirmed]
+      properties:
+        partner_name:
+          type: string
+        learner_name:
+          type: string
+        learner_contact:
+          type: string
+        consent_confirmed:
+          type: boolean
