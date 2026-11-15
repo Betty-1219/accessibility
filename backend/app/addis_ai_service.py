@@ -18,26 +18,52 @@ def _get_client() -> Optional["AddisAI"]:
 def _offline_assistant_reply(prompt: str, language: str, step: int) -> str:
     q = prompt.lower()
     if language == "am":
-        if any(w in q for w in ["ስም", "name", "ይለፍ", "password", "ምዝገባ"]):
-            return "በደረጃ 1 ሙሉ ስምዎን እና ቢያንስ 4 ፊደል ያለው የይለፍ ቃል ያስገቡ። 'Speak' የሚለውን በመጫን በድምፅ መናገር ይችላሉ።"
-        if any(w in q for w in ["ንፅፅር", "contrast", "zoom", "ማጉላት", "ቀለም"]):
-            return "ከላይ ባለው 'ንፅፅር' ቁልፍ የቀለም ንፅፅር መቀየር፣ እንዲሁም በ 'አጉላ (+)' ጽሑፉን ማሳደግ ይችላሉ።"
+        if any(w in q for w in ["ስም", "name", "ፊደል", "spell", "ይለፍ", "password"]):
+            return (
+                "በደረጃ 1 ሙሉ ስምዎን ይናገሩ። በትክክል ካልተሰማ 'አይ' በማለት በፊደል ይናገሩ። "
+                "ከዚያ ቢያንስ 4 ቁምፊ የይለፍ ቃል ይናገሩ እና ለማረጋገጥ ይድገሙት።"
+            )
         if any(w in q for w in ["መታወቂያ", "id", "otp", "ስልክ", "ማረጋገጫ"]):
-            return "በደረጃ 2 ብሔራዊ/ቀበሌ መታወቂያ፣ የስደተኞች መታወቂያ ወይም ያለ መታወቂያ በአጋር ድርጅት በኩል ማረጋገጥ ይችላሉ።"
-        return f"አሁን ያሉት በደረጃ {step} ላይ ነው። ለመጻፍ 'Speak' ቁልፍን ይጫኑ፣ ወይም ድምፅ ለማቆም Escape (Esc) ይጫኑ።"
+            return (
+                "በደረጃ 2 ብሔራዊ/ቀበሌ መታወቂያ፣ የስደተኞች መታወቂያ፣ ሌላ ሰነድ ወይም ያለ መታወቂያ በአጋር ድርጅት "
+                "መምረጥ እና እያንዳንዱን መረጃ ማረጋገጥ ይችላሉ።"
+            )
+        if any(w in q for w in ["submit", "ላክ", "አስገባ", "ጨርስ", "መዝግብ"]):
+            return "በደረጃ 2 መጨረሻ ላይ 'ላክ' ወይም 'አስገባ' ወይም 'Submit' በማለት ምዝገባዎን ይጨርሱ።"
+        if any(w in q for w in ["ስራ", "job", "career", "roadmap", "accesspath"]):
+            return (
+                "ወደ AccessPath ዳሽቦርድ ከገቡ በኋላ የሙያ መንገድ መምረጥ፣ የትምህርት ደረጃዎችን መከታተል "
+                "እና ለስራ በድምፅ ወይም በጽሑፍ ማመልከት ይችላሉ።"
+            )
+        return (
+            f"አሁን ያሉት በደረጃ {step} ላይ ነው። ለመድገም 'ድገም'፣ ለመመለስ 'ተመለስ'፣ "
+            "ለማቆም Escape ይጫኑ።"
+        )
 
-    if any(w in q for w in ["contrast", "color", "vision", "zoom", "see", "big"]):
-        return "Click Contrast in the top bar to pick Yellow-on-Black, White-on-Black, or custom colors, and use Zoom (+) to enlarge text up to 200%."
-    if any(w in q for w in ["voice", "speak", "mic", "blind", "stop", "mute"]):
-        return "Click the Speak button beside any box to dictate your answer. Press Escape (Esc) or click Pause Voice anytime to silence speech."
-    if any(w in q for w in ["id", "verify", "otp", "refugee", "partner", "code"]):
-        return "In Step 2, you can verify with a National/Kebele ID, Refugee ID, Alternative Document, or Partner Referral (no ID needed), then confirm via SMS/Audio OTP."
-    if any(w in q for w in ["password", "name", "step 1", "register"]):
-        return "In Step 1, type or speak your full name and a password of at least 4 characters, then click Next."
-    return f"You are on Step {step}. Use the Speak buttons for voice input, Contrast/Zoom in the top bar for visibility, or Next/Back to navigate."
+    if any(w in q for w in ["spell", "wrong", "name", "hear", "incorrect"]):
+        return (
+            "If I misheard your name, say 'No' when asked to confirm. Spell it letter by letter—"
+            "like 'A B E B E space B I K I L A'—then say 'Done' or 'Yes' to confirm."
+        )
+    if any(w in q for w in ["password", "passcode", "pin", "step 1"]):
+        return "In Step 1, enter a passcode of at least 4 characters and repeat it once to confirm it matches."
+    if any(w in q for w in ["id", "verify", "otp", "refugee", "partner", "step 2"]):
+        return (
+            "In Step 2, choose an ID route (1-4) and confirm each answer. For security, your 6-digit OTP "
+            "is sent to your contact and never displayed on the screen."
+        )
+    if any(w in q for w in ["career", "accesspath", "roadmap", "job"]):
+        return (
+            "In AccessPath Career Dashboard, explore 6 careers, pick your roadmap, mark stages complete, "
+            "filter jobs by accommodations, and apply using voice or typing."
+        )
+    return (
+        f"You are on Step {step}. Say 'Repeat' to hear the question again, 'Wait' for extra time, "
+        "'Back' to go back, or press Escape to pause speech."
+    )
 
 
-def process_addis_text(prompt: str, language: str = "en", step: int = 0) -> str:
+def process_addis_text(prompt: str, language: str = "en", step: int = 1) -> str:
     client = _get_client()
     if client:
         try:
@@ -47,12 +73,14 @@ def process_addis_text(prompt: str, language: str = "en", step: int = 0) -> str:
                 else "Reply clearly and concisely in English."
             )
             system_msg = (
-                "You are the Digital Bridge Accessibility Assistant for ALX Ethiopia. "
-                "Help learners with visual, motor, or hearing disabilities complete registration. "
-                f"Current onboarding step: {step}. {lang_instruction}"
+                "You are the Digital Bridge & AccessPath Accessibility Assistant for ALX Ethiopia. "
+                "The user may be blind and navigating without a mouse or screen reading. "
+                "Onboarding is 2 steps (Login/Signup choice -> Step 1 Name with spelling fallback & Passcode confirmation -> "
+                "Step 2 ID verification, Contact, OTP, and Voice Submit), followed by the AccessPath Career Dashboard. "
+                f"Current step: {step}. {lang_instruction}"
             )
             res = client.chat.completions.create(
-                language="am",
+                language="am" if language == "am" else "en",
                 system=system_msg,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -69,7 +97,6 @@ def generate_addis_tts_bytes(text: str, language: str = "am") -> Optional[tuple[
     client = _get_client()
     if not client or language != "am":
         return None
-
     try:
         clip = client.voice.generate(voice_id="am-hamen", text=text, language="am")
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
@@ -90,7 +117,6 @@ def transcribe_with_addis(audio_bytes: bytes, filename: str, language: str = "am
     client = _get_client()
     if not client:
         return None
-
     suffix = os.path.splitext(filename or "audio.webm")[1] or ".webm"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(audio_bytes)

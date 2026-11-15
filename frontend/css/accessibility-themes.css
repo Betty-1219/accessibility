@@ -5,6 +5,7 @@
   --db-border: #1f2937;
   --db-accent: #0056b3;
   --db-accent-fg: #ffffff;
+  --db-zoom: 1;
 }
 
 body {
@@ -13,6 +14,13 @@ body {
   background: var(--db-bg);
   color: var(--db-fg);
   line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 body.db-theme-default {
@@ -69,4 +77,147 @@ body.db-theme-dark_white {
   flex-wrap: wrap;
   gap: 1rem;
   margin-bottom: 1.25rem;
+}
+
+.db-widget-root {
+  font-size: calc(1rem * var(--db-zoom));
+  background: var(--db-card-bg);
+  color: var(--db-fg);
+  border: 2px solid var(--db-border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+.db-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+  border-bottom: 2px solid var(--db-border);
+}
+
+.db-btn {
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0.65rem 1.05rem;
+  font-size: 1em;
+  font-weight: 700;
+  border-radius: 8px;
+  border: 2px solid var(--db-border);
+  background: var(--db-card-bg);
+  color: var(--db-fg);
+  cursor: pointer;
+}
+
+.db-btn-primary {
+  background: var(--db-accent);
+  color: var(--db-accent-fg);
+  border-color: var(--db-accent);
+}
+
+.db-input,
+.db-textarea,
+.db-select {
+  width: 100%;
+  min-height: 48px;
+  padding: 0.65rem 0.75rem;
+  font-size: 1.05em;
+  border: 2px solid var(--db-border);
+  border-radius: 8px;
+  background: var(--db-bg);
+  color: var(--db-fg);
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.db-textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.db-status-banner {
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: 8px;
+  border: 2px solid var(--db-border);
+  font-weight: 600;
+}
+
+.db-error-banner {
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: 8px;
+  border: 3px solid #b91c1c;
+  font-weight: 700;
+}
+
+.db-card {
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border: 2px solid var(--db-border);
+  border-radius: 10px;
+  background: var(--db-card-bg);
+}
+
+.db-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.db-option-card {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  gap: 0.75rem;
+  min-height: 48px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.6rem;
+  border: 2px solid var(--db-border);
+  border-radius: 8px;
+  background: var(--db-card-bg);
+  color: var(--db-fg);
+  font-size: 1em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.db-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  align-items: center;
+}
+
+.db-progress-bar {
+  width: 100%;
+  height: 18px;
+  border: 2px solid var(--db-border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--db-bg);
+}
+
+.db-progress-fill {
+  height: 100%;
+  background: var(--db-accent);
+}
+
+.db-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

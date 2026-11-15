@@ -1,1234 +1,1829 @@
-class DigitalBridgeOnboarding extends HTMLElement {
-  constructor() {
-    super();
-    this.store = new window.DigitalBridgeStateManager();
-    this.voice = window.DigitalBridgeVoiceEngine
-      ? new window.DigitalBridgeVoiceEngine()
-      : {
-          ttsEnabled: false,
-          apiBase: "",
-          setLanguage() {},
-          cancelSpeech() {},
-          speak(_text, cb) { if (cb) cb(); },
-          startListening(_ok, err) { if (err) err("Voice engine not loaded."); },
-          stopListening() {}
-        };
-    this.pendingConfirmation = null;
-    this.showCustomContrast = false;
-    this.aiReply = "";
-    this.voiceStatus = "";
-    this.demoOtpHint = "";
-    this.autoListening = false;
-    this.autoRetryCount = 0;
-    this.voiceUnlocked = false;
+(function (global) {
+  function getI18n() {
+    return global.DigitalBridgeI18n || {
+      t: function (_l, k) {
+        return String(k);
+      },
+    };
   }
 
-  connectedCallback() {
-    this.apiBase = this.getAttribute("api-base") || "http://localhost:8000/api/v1";
-    this.voice.apiBase = this.apiBase;
-    this.store.applyVisualPreferences();
-    this.syncVoicePrefs();
+  function getStateApi() {
+    return global.DigitalBridgeState;
+  }
 
-    if (this.store.state.registered && this.store.state.form.full_name) {
-      this.store.setStep(5);
+  function getVoiceApi() {
+    return global.DigitalBridgeVoice;
+  }
+
+  class DigitalBridgeOnboarding extends HTMLElement {
+    constructor() {
+      super();
+      var self = this;
+      this.I18n = getI18n();
+      this.State = getStateApi();
+      this.Voice = getVoiceApi();
+      this.state = this.State.load();
+      this.apiBase = this.getAttribute("api-base") || "http://localhost:8000/api/v1";
+      this.voice = new this.Voice.VoiceEngine(this.apiBase, function (vs) {
+        self._updateVoiceBadge(vs);
+      });
+      this.voiceLoopActive = false;
+      this.isSubmitting = false;
+      this.pendingValue = "";
+      this.pendingPassword = "";
+      this.spellBuffer = "";
+      this.lastError = "";
+      this.lastNotice = "";
+
+      this.careers = [];
+      this.dashboard = null;
+      this.jobs = [];
+      this.jobSearchQuery = "";
+      this.jobSupportFilter = "";
+      this.applyingJobId = null;
+      this.showEmployerForm = false;
+
+      this._silenceCount = 0;
+      this._globalKeyHandler = this._onGlobalKeyDown.bind(this);
+      this._firstGestureHandler = this._onFirstGesture.bind(this);
     }
 
-    this._onKeyDown = (e) => {
+    connectedCallback() {
+      try {
+        this.apiBase = this.getAttribute("api-base") || this.apiBase;
+        this.voice.apiBase = this.apiBase;
+
+        var attrLang = this.getAttribute("lang");
+        if (attrLang && !this.state.data.preferred_language) {
+          this.state.data.preferred_language = attrLang === "am" ? "am" : "en";
+        }
+        this.voice.setLanguage(this.state.data.preferred_language);
+        this._applyVisualPrefs();
+
+        var params = new URLSearchParams(global.location.search);
+        var resumeToken = params.get("resume");
+        if (resumeToken && !this.state.completed) {
+          this._resumeFromToken(resumeToken);
+        }
+
+        document.addEventListener("keydown", this._globalKeyHandler);
+        document.addEventListener("pointerdown", this._firstGestureHandler, { once: true });
+
+        if (this.state.accessToken) {
+          this.state.step = 100;
+          this.state.substep = "career_dashboard";
+          this._loadAccessPathData();
+        }
+
+        this.render();
+        this._announceLive(this._getCurrentPromptText());
+      } catch (err) {
+        this.innerHTML =
+          '<div role="alert" class="db-error-banner">Load error: ' +
+          String(err && err.message ? err.message : err) +
+          "</div>";
+      }
+    }
+
+    disconnectedCallback() {
+      this.voiceLoopActive = false;
+      this.voice.stopAll();
+      document.removeEventListener("keydown", this._globalKeyHandler);
+      document.removeEventListener("pointerdown", this._firstGestureHandler);
+    }
+
+    get lang() {
+      return this.state && this.state.data && this.state.data.preferred_language === "am"
+        ? "am"
+        : "en";
+    }
+
+    _t(key) {
+      var args = Array.prototype.slice.call(arguments, 1);
+      return this.I18n.t.apply(null, [this.lang, key].concat(args));
+    }
+
+    _onFirstGesture() {
+      if (!this.state.voiceModeAsked && !this.voiceLoopActive) {
+        this.startHandsFreeLoop();
+      }
+    }
+
+    _onGlobalKeyDown(e) {
+      var tag = (e.target && e.target.tagName) || "";
+      var inTextInput = ["INPUT", "TEXTAREA", "SELECT"].indexOf(tag) !== -1;
+
       if (e.key === "Escape") {
-        this.pauseHandsFreeMode("Hands-free voice paused. Press Spacebar anytime to resume.");
+        this.voiceLoopActive = false;
+        this.voice.stopAll();
+        this._announceLive(this._t("pausedStatus"));
+        this.render();
         return;
       }
-      // Spacebar outside text inputs unlocks & starts hands-free blind voice flow
-      const tag = document.activeElement?.tagName;
-      if (e.code === "Space" && tag !== "INPUT" && tag !== "SELECT" && tag !== "BUTTON") {
+      if (e.altKey && e.key.toLowerCase() === "a") {
         e.preventDefault();
-        this.startHandsFreeSession();
+        this.state.voiceReadingEnabled = true;
+        this.State.save(this.state);
+        this.startHandsFreeLoop();
+        return;
       }
-    };
-    window.addEventListener("keydown", this._onKeyDown);
-
-    this.render();
-    this.announceCurrentStep();
-  }
-
-  disconnectedCallback() {
-    window.removeEventListener("keydown", this._onKeyDown);
-    this.voice.stopListening();
-    this.voice.cancelSpeech();
-  }
-
-  t(key, fallback = null) {
-    const lang = this.store.state.preferences.language;
-    const dict = window.DigitalBridgeI18n[lang] || window.DigitalBridgeI18n.en;
-    return dict[key] || window.DigitalBridgeI18n.en[key] || fallback || key;
-  }
-
-  escapeHtml(str = "") {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
-
-  setVoiceStatus(msg) {
-    this.voiceStatus = msg;
-    const el = this.querySelector("#voice-status-text");
-    if (el) {
-      el.textContent = msg;
-      el.style.display = msg ? "block" : "none";
-    }
-  }
-
-  syncVoicePrefs() {
-    const { tts_enabled, language } = this.store.state.preferences;
-    this.voice.ttsEnabled = tts_enabled;
-    this.voice.setLanguage(language);
-    if (!tts_enabled) this.voice.cancelSpeech();
-  }
-
-  pauseHandsFreeMode(message = "") {
-    this.autoListening = false;
-    this.voice.stopListening();
-    this.voice.cancelSpeech();
-    this.store.updatePreferences({ tts_enabled: false, stt_enabled: false, auto_flow: false });
-    this.syncVoicePrefs();
-    if (message) this.voiceStatus = message;
-    this.render();
-  }
-
-  startHandsFreeSession() {
-    this.voiceUnlocked = true;
-    this.autoRetryCount = 0;
-    this.store.updatePreferences({ tts_enabled: true, stt_enabled: true, auto_flow: true });
-    this.syncVoicePrefs();
-    this.render();
-    this.runAutoTurn();
-  }
-
-  getAutoTarget() {
-    const { step, has_disability, form, preferences } = this.store.state;
-    const am = preferences.language === "am";
-
-    if (this.pendingConfirmation) {
-      const { label, value, isSecret } = this.pendingConfirmation;
-      return {
-        type: "confirm",
-        prompt: am
-          ? (isSecret ? "የይለፍ ቃል ተቀብሏል። ትክክል ከሆነ 'አዎ' ይበሉ፣ ለመቀየር 'አስተካክል' ይበሉ።" : `የሰማሁት ${value} ነው። ትክክል ከሆነ 'አዎ' ይበሉ፣ ለመቀየር 'አስተካክል' ይበሉ።`)
-          : (isSecret ? `${label} captured. Say Yes to confirm, or Edit to try again.` : `I heard ${value} for ${label}. Say Yes to confirm, or Edit to try again.`)
-      };
-    }
-
-    if (step === 0 && has_disability === null) {
-      return {
-        type: "gate_yes_no",
-        prompt: am
-          ? "እንኳን ወደ ALX በደህና መጡ። የአካል ጉዳት ወይም የተደራሽነት ድጋፍ ይፈልጋሉ? 'አዎ' ወይም 'አይ' ይበሉ።"
-          : "Welcome to ALX. Do you have a disability or need accessibility support? Please say Yes or No."
-      };
-    }
-
-    if (step === 0 && has_disability === true) {
-      return {
-        type: "gate_profile",
-        prompt: am
-          ? "ምን አይነት ድጋፍ ይፈልጋሉ? 'ዓይነ ስውር'፣ 'ዝቅተኛ እይታ'፣ 'የአካል ድጋፍ' ወይም 'መደበኛ' ይበሉ።"
-          : "What kind of support do you need? Please say Blind, Low Vision, Physical, or Standard."
-      };
-    }
-
-    if (step === 1) {
-      if (!form.full_name.trim()) {
-        return {
-          type: "field",
-          field: "full_name",
-          label: this.t("fullNameLabel"),
-          isSecret: false,
-          prompt: am ? "ደረጃ 1። እባክዎ ሙሉ ስምዎን ይናገሩ።" : "Step 1. Please say your full name."
-        };
+      if (inTextInput) {
+        return;
       }
-      if (!form.password || form.password.length < 4) {
-        return {
-          type: "field",
-          field: "password",
-          label: this.t("passwordLabel"),
-          isSecret: true,
-          prompt: am ? "እባክዎ ቢያንስ 4 ፊደል ያለው የይለፍ ቃል ይናገሩ።" : "Please say your secure password, at least 4 characters."
-        };
+
+      if (e.code === "Space" && tag !== "BUTTON") {
+        e.preventDefault();
+        this.state.voiceReadingEnabled = true;
+        this.State.save(this.state);
+        this.startHandsFreeLoop();
+        return;
       }
-      return { type: "goto", nextStep: 2 };
+
+      var sub = this.state.substep || "accessibility_ask";
+      if (sub === "accessibility_ask") {
+        if (e.key === "y" || e.key === "Y") {
+          this._handleTurnInput("yes");
+        } else if (e.key === "n" || e.key === "N") {
+          this._handleTurnInput("no");
+        }
+      } else if (sub === "auth_choice") {
+        if (e.key === "1") {
+          this._handleTurnInput("login");
+        } else if (e.key === "2") {
+          this._handleTurnInput("signup");
+        }
+      } else if (sub === "language") {
+        if (e.key === "1") {
+          this._handleLanguageChoice("en");
+        } else if (e.key === "2") {
+          this._handleLanguageChoice("am");
+        }
+      } else if (sub.indexOf("confirm_") === 0) {
+        if (e.key === "y" || e.key === "Y") {
+          this._handleTurnInput("yes");
+        } else if (e.key === "n" || e.key === "N") {
+          this._handleTurnInput("no");
+        }
+      } else if (sub === "id_route" && ["1", "2", "3", "4"].indexOf(e.key) !== -1) {
+        this._handleTurnInput(e.key);
+      }
     }
 
-    if (step === 2) {
-      if (!form.route_confirmed) {
-        return {
-          type: "identity_route",
-          prompt: am
-            ? "ደረጃ 2፣ ማረጋገጫ። 'ብሔራዊ መታወቂያ'፣ 'የስደተኞች መታወቂያ'፣ 'ሌላ ሰነድ' ወይም 'አጋር ድርጅት' ይበሉ።"
-            : "Step 2, identity verification. Say National ID, Refugee ID, Alternative Document, or Partner Referral."
-        };
-      }
-      if (form.identity_route === "partner_referral" && !form.partner_name.trim()) {
-        return {
-          type: "field",
-          field: "partner_name",
-          label: this.t("partnerNameLabel"),
-          isSecret: false,
-          prompt: am ? "እባክዎ የአጋር ድርጅቱን ስም ይናገሩ።" : "Please say the name of your partner organization."
-        };
-      }
-      if (form.identity_route !== "partner_referral" && !form.document_number.trim()) {
-        return {
-          type: "field",
-          field: "document_number",
-          label: this.t("idNumberLabel"),
-          isSecret: false,
-          prompt: am ? "እባክዎ የመታወቂያ ቁጥርዎን ይናገሩ።" : "Please say your document number."
-        };
-      }
-      if (!form.contact_value.trim()) {
-        return {
-          type: "field",
-          field: "contact_value",
-          label: this.t("contactLabel"),
-          isSecret: false,
-          prompt: am ? "እባክዎ ስልክ ቁጥርዎን ይናገሩ።" : "Please say your phone number."
-        };
-      }
-      if (!form.otp_verified) {
-        return {
-          type: "otp",
-          prompt: am
-            ? `የማረጋገጫ ኮድ ተልኳል። ኮዱ ${this.demoOtpHint.split("").join(" ")} ነው። እባክዎ 6ቱን ቁጥሮች ይናገሩ፣ ወይም 'ቀጣይ' ይበሉ።`
-            : `Your verification code is ${this.demoOtpHint.split("").join(" ")}. Please say the 6-digit code to verify, or say Next to skip for now.`
-        };
-      }
-      return { type: "goto", nextStep: 3 };
+    _applyVisualPrefs() {
+      var prefs = (this.state && this.state.data && this.state.data.preferences) || {};
+      document.body.className = "db-theme-" + (prefs.contrast_mode || "default");
+      document.documentElement.style.setProperty(
+        "--db-zoom",
+        String((prefs.zoom_percent || 100) / 100)
+      );
     }
 
-    if (step === 3) {
-      return {
-        type: "support_needs",
-        prompt: am
-          ? "ደረጃ 3፣ ተጨማሪ ድጋፍ። 'ስክሪን አንባቢ'፣ 'ተጨማሪ ጊዜ'፣ 'የምልክት ቋንቋ'፣ 'ተደራሽ የስራ ቦታ' ይበሉ፣ ወይም ለመቀጠል 'ቀጣይ' ይበሉ።"
-          : "Step 3, support needs. Say Screen Reader, Extra Time, Sign Language, Accessible Workplace, or say Next to continue."
-      };
+    _announceLive(msg) {
+      var el = this.querySelector("#db-aria-live");
+      if (el) {
+        el.textContent = "";
+        setTimeout(function () {
+          el.textContent = msg;
+        }, 40);
+      }
     }
 
-    if (step === 4) {
-      return {
-        type: "review_submit",
-        prompt: am
-          ? `ማጠቃለያ። ስም ${form.full_name}። ስልክ ${form.contact_value}። ለመላክ 'አስገባ' ይበሉ፣ ወይም ለማስተካከል 'ተመለስ' ይበሉ።`
-          : `Final review. Full name: ${form.full_name}. Phone number: ${form.contact_value}. Verification: ${form.otp_verified ? "verified" : "pending"}. Say Submit to finish registration, or Back to edit.`
-      };
+    _updateVoiceBadge(vs) {
+      var badge = this.querySelector("#db-voice-status");
+      if (!badge) {
+        return;
+      }
+      if (vs.isSpeaking) {
+        badge.textContent = this._t("speakingStatus");
+      } else if (vs.isListening) {
+        badge.textContent = this._t("listeningStatus");
+      } else if (!this.voiceLoopActive) {
+        badge.textContent = this._t("pausedStatus");
+      } else {
+        badge.textContent = "";
+      }
     }
 
-    return null;
-  }
-
-  async runAutoTurn() {
-    if (!this.store.state.preferences.auto_flow || !this.store.state.preferences.stt_enabled) {
-      return;
+    async _resumeFromToken(token) {
+      try {
+        var res = await fetch(this.apiBase + "/onboarding/session/" + encodeURIComponent(token));
+        if (!res.ok) {
+          return;
+        }
+        var draft = await res.json();
+        this.state.resumeToken = draft.token;
+        this.state.step = draft.step || 1;
+        this.state.data = Object.assign({}, this.state.data, draft.data || {});
+        this.state.substep = this.state.step === 2 ? "id_route" : "name";
+        this.State.save(this.state);
+        this.render();
+      } catch (_e) {}
     }
 
-    const target = this.getAutoTarget();
-    if (!target) return;
+    async startHandsFreeLoop() {
+      if (this.voiceLoopActive) {
+        return;
+      }
+      this.voice.setMuted(false);
+      this.voiceLoopActive = true;
+      this._silenceCount = 0;
 
-    if (target.type === "goto") {
-      this.store.setStep(target.nextStep);
+      while (this.voiceLoopActive && !this.isSubmitting) {
+        if (this.state.substep === "career_dashboard") {
+          var summary = this._getAccessPathVoiceSummary();
+          this._announceLive(summary);
+          await this.voice.speak(summary, this.lang);
+          if (!this.voiceLoopActive) {
+            break;
+          }
+          var cmdRes = await this.voice.listenOnce(this.lang, {
+            initialWaitMs: 12000,
+            trailingSilenceMs: 2600,
+          });
+          if (!this.voiceLoopActive) {
+            break;
+          }
+          if (!cmdRes || !cmdRes.transcript) {
+            this.voiceLoopActive = false;
+            this.render();
+            break;
+          }
+          await this._handleAccessPathVoiceCommand(cmdRes.transcript);
+          continue;
+        }
+
+        var promptText = this._getCurrentPromptText();
+        this._announceLive(promptText);
+        await this.voice.speak(promptText, this.lang);
+        if (!this.voiceLoopActive || this.isSubmitting) {
+          break;
+        }
+
+        var res = await this.voice.listenOnce(this.lang, {
+          initialWaitMs: 12000,
+          trailingSilenceMs: 2600,
+        });
+        if (!this.voiceLoopActive || this.isSubmitting) {
+          break;
+        }
+
+        if (!res || !res.transcript) {
+          this._silenceCount++;
+          var errCode = res ? res.error : "no-speech";
+          if (errCode === "not-allowed" || errCode === "unsupported") {
+            this.voiceLoopActive = false;
+            this.lastError = "Microphone unavailable. You can type and press Enter.";
+            this.render();
+            await this.voice.speak(this.lastError, this.lang);
+            break;
+          }
+          if (this._silenceCount >= 4) {
+            this.voiceLoopActive = false;
+            this._announceLive(this._t("pausedStatus"));
+            await this.voice.speak(this._t("pausedStatus"), this.lang);
+            this.render();
+            break;
+          }
+          await this.voice.speak(this._t("noSpeech"), this.lang);
+          continue;
+        }
+
+        this._silenceCount = 0;
+        await this._handleTurnInput(res.transcript);
+      }
+    }
+
+    _getCurrentPromptText() {
+      var s = this.state.substep || "accessibility_ask";
+      var d = this.state.data;
+      var labels = this._t("routeLabels") || {};
+
+      if (s === "accessibility_ask") {
+        return this._t("welcomeEntry");
+      }
+      if (s === "auth_choice") {
+        return this._t("askAuthChoice");
+      }
+      if (s === "language") {
+        return this._t("askLanguage");
+      }
+      if (s === "login_name") {
+        return this._t("loginNameAsk");
+      }
+      if (s === "login_password") {
+        return this._t("loginPasswordAsk");
+      }
+      if (s === "name") {
+        return this._t("askName");
+      }
+      if (s === "confirm_name") {
+        return this._t("confirmName", this.pendingValue);
+      }
+      if (s === "spell_name") {
+        return this.spellBuffer ? this._t("spellHeard", this.spellBuffer) : this._t("spellIntro");
+      }
+      if (s === "confirm_spelled_name") {
+        return this._t("spellConfirm", this.pendingValue, this.pendingValue.split("").join(", "));
+      }
+      if (s === "password") {
+        return this._t("askPassword");
+      }
+      if (s === "confirm_password_reenter") {
+        return this._t("askPasswordConfirm");
+      }
+      if (s === "id_route") {
+        return this._t("askIdRoute");
+      }
+      if (s === "confirm_id_route") {
+        return this._t("confirmIdRoute", labels[this.pendingValue] || this.pendingValue);
+      }
+      if (s === "doc_or_partner") {
+        return d.identity.route === "partner_referral"
+          ? this._t("askPartnerName")
+          : this._t("askDocNumber");
+      }
+      if (s === "confirm_doc_or_partner") {
+        return this._t("confirmDocOrPartner", this.pendingValue);
+      }
+      if (s === "contact") {
+        return this._t("askContact");
+      }
+      if (s === "confirm_contact") {
+        return this._t("confirmContact", this.pendingValue);
+      }
+      if (s === "otp") {
+        return this._t("otpSent");
+      }
+      if (s === "review_submit") {
+        var docRef =
+          d.identity.route === "partner_referral"
+            ? d.identity.partner_name
+            : d.identity.document_number;
+        return this._t(
+          "reviewPrompt",
+          d.full_name,
+          labels[d.identity.route] || d.identity.route,
+          docRef,
+          d.identity.contact_value
+        );
+      }
+      if (s === "career_dashboard") {
+        return this._getAccessPathVoiceSummary();
+      }
+      return this._t("welcomeEntry");
+    }
+
+    async _handleTurnInput(rawInput) {
+      var text = (rawInput || "").trim();
+      var n = this.Voice.norm(text);
+      var sub = this.state.substep || "accessibility_ask";
+      this.lastError = "";
+      this.lastNotice = "";
+
+      if (["repeat", "again", "ድገም", "ድገሚ"].indexOf(n) !== -1) {
+        return;
+      }
+      if (["wait", "hold on", "ጠብቅ"].indexOf(n) !== -1) {
+        await this.voice.speak(this._t("waitReply"), this.lang);
+        await new Promise(function (r) {
+          setTimeout(r, 8000);
+        });
+        return;
+      }
+      if (["stop", "pause", "mute", "አቁም"].indexOf(n) !== -1) {
+        this.voiceLoopActive = false;
+        this.voice.stopAll();
+        this.render();
+        return;
+      }
+      if (["zoom in", "bigger", "አጉላ"].indexOf(n) !== -1) {
+        this._zoomBy(25);
+        return;
+      }
+      if (["zoom out", "smaller", "አሳንስ"].indexOf(n) !== -1) {
+        this._zoomBy(-25);
+        return;
+      }
+      if (["contrast", "ንፅፅር"].indexOf(n) !== -1) {
+        this._cycleContrast();
+        return;
+      }
+      if (["help", "እርዳታ"].indexOf(n) !== -1) {
+        var helpMsg = await this._fetchHelp(text);
+        await this.voice.speak(helpMsg, this.lang);
+        return;
+      }
+      if (["back", "previous", "ተመለስ"].indexOf(n) !== -1 && sub !== "accessibility_ask") {
+        this._goBack();
+        return;
+      }
+
+      if (sub === "review_submit" && this.Voice.isSubmitCommand(text)) {
+        await this._submitRegistration();
+        return;
+      }
+
+      switch (sub) {
+        case "accessibility_ask":
+          this.state.voiceModeAsked = true;
+          if (this.Voice.isNo(text)) {
+            this.state.voiceReadingEnabled = false;
+            this.state.data.preferences.tts_enabled = false;
+            this.state.data.preferences.stt_enabled = false;
+            this.state.data.preferences.profile_type = "standard";
+            this.voiceLoopActive = false;
+            this.voice.stopAll();
+            this.state.substep = "auth_choice";
+          } else {
+            this.state.voiceReadingEnabled = true;
+            this.state.data.preferences.tts_enabled = true;
+            this.state.data.preferences.stt_enabled = true;
+            this.state.data.preferences.profile_type = "blind";
+            this.state.substep = "auth_choice";
+          }
+          break;
+
+        case "auth_choice":
+          if (
+            n.indexOf("1") !== -1 ||
+            n.indexOf("login") !== -1 ||
+            n.indexOf("log in") !== -1 ||
+            n.indexOf("sign in") !== -1 ||
+            n.indexOf("ግባ") !== -1
+          ) {
+            this.state.substep = "login_name";
+          } else {
+            this.state.substep = "language";
+          }
+          break;
+
+        case "login_name":
+          if (text.length < 2) {
+            this.lastError = "Please provide your full name.";
+            break;
+          }
+          this.pendingValue = text;
+          this.state.substep = "login_password";
+          break;
+
+        case "login_password":
+          await this._performLogin(this.pendingValue, text);
+          return;
+
+        case "language":
+          if (n.indexOf("2") !== -1 || n.indexOf("amhar") !== -1 || n.indexOf("አማርኛ") !== -1) {
+            this._handleLanguageChoice("am");
+          } else {
+            this._handleLanguageChoice("en");
+          }
+          return;
+
+        case "name":
+          if (text.length < 2) {
+            this.lastError = "Please say or type at least 2 characters.";
+            break;
+          }
+          this.pendingValue = this.Voice.formatTitleCase(text);
+          this.state.substep = "confirm_name";
+          break;
+
+        case "confirm_name":
+          if (this.Voice.isYes(text)) {
+            this.state.data.full_name = this.pendingValue;
+            this.pendingValue = "";
+            this.state.substep = "password";
+          } else if (this.Voice.isNo(text)) {
+            this.spellBuffer = "";
+            this.pendingValue = "";
+            this.state.substep = "spell_name";
+          }
+          break;
+
+        case "spell_name": {
+          var parsed = this.Voice.parseSpelledSegment(text, this.spellBuffer);
+          this.spellBuffer = parsed.buffer;
+          if (parsed.finished) {
+            var cand = this.Voice.formatTitleCase(this.spellBuffer);
+            if (cand.length < 2) {
+              this.lastError = "Please spell at least 2 letters.";
+              this.spellBuffer = "";
+            } else {
+              this.pendingValue = cand;
+              this.state.substep = "confirm_spelled_name";
+            }
+          }
+          break;
+        }
+
+        case "confirm_spelled_name":
+          if (this.Voice.isYes(text)) {
+            this.state.data.full_name = this.pendingValue;
+            this.pendingValue = "";
+            this.spellBuffer = "";
+            this.state.substep = "password";
+          } else if (this.Voice.isNo(text)) {
+            this.spellBuffer = "";
+            this.pendingValue = "";
+            this.state.substep = "spell_name";
+          } else {
+            var extra = this.Voice.parseSpelledSegment(
+              text.replace(/^add\s+/i, ""),
+              this.spellBuffer + " "
+            );
+            if (extra.buffer.length > this.spellBuffer.length) {
+              this.spellBuffer = extra.buffer;
+              this.pendingValue = this.Voice.formatTitleCase(this.spellBuffer);
+            }
+          }
+          break;
+
+        case "password": {
+          var digits = this.Voice.parseDigits(text);
+          var passCandidate = digits.length >= 4 ? digits : text.replace(/\s+/g, "");
+          if (passCandidate.length < 4) {
+            this.lastError = this._t("passwordTooShort");
+            if (this.state.voiceReadingEnabled) {
+              await this.voice.speak(this.lastError, this.lang);
+            }
+          } else {
+            this.pendingPassword = passCandidate;
+            this.state.substep = "confirm_password_reenter";
+          }
+          break;
+        }
+
+        case "confirm_password_reenter": {
+          var reDigits = this.Voice.parseDigits(text);
+          var reEntered = reDigits.length >= 4 ? reDigits : text.replace(/\s+/g, "");
+          if (reEntered === this.pendingPassword) {
+            this.state.data.password = this.pendingPassword;
+            this.pendingPassword = "";
+            this.state.step = 2;
+            this.state.substep = "id_route";
+            if (this.state.voiceReadingEnabled) {
+              await this.voice.speak(this._t("passwordConfirmed"), this.lang);
+            }
+            this.State.syncDraftToServer(this.apiBase, this.state);
+          } else {
+            this.pendingPassword = "";
+            this.lastError = this._t("passwordMismatch");
+            this.state.substep = "password";
+            if (this.state.voiceReadingEnabled) {
+              await this.voice.speak(this.lastError, this.lang);
+            }
+          }
+          break;
+        }
+
+        case "id_route":
+          if (
+            n.indexOf("2") !== -1 ||
+            n.indexOf("refugee") !== -1 ||
+            n.indexOf("ስደተኛ") !== -1 ||
+            n.indexOf("ሁለት") !== -1
+          ) {
+            this.pendingValue = "refugee_id";
+          } else if (
+            n.indexOf("3") !== -1 ||
+            n.indexOf("alt") !== -1 ||
+            n.indexOf("other") !== -1 ||
+            n.indexOf("ሌላ") !== -1 ||
+            n.indexOf("ሶስት") !== -1
+          ) {
+            this.pendingValue = "alt_doc";
+          } else if (
+            n.indexOf("4") !== -1 ||
+            n.indexOf("partner") !== -1 ||
+            n.indexOf("refer") !== -1 ||
+            n.indexOf("አጋር") !== -1 ||
+            n.indexOf("አራት") !== -1
+          ) {
+            this.pendingValue = "partner_referral";
+          } else {
+            this.pendingValue = "national_kebele_id";
+          }
+          this.state.substep = "confirm_id_route";
+          break;
+
+        case "confirm_id_route":
+          if (this.Voice.isYes(text)) {
+            this.state.data.identity.route = this.pendingValue;
+            this.pendingValue = "";
+            this.state.substep = "doc_or_partner";
+          } else if (this.Voice.isNo(text)) {
+            this.pendingValue = "";
+            this.state.substep = "id_route";
+          }
+          break;
+
+        case "doc_or_partner": {
+          var skipWords = ["skip", "none", "no", "ዝለል", "የለኝም"];
+          if (skipWords.indexOf(n) !== -1) {
+            this.pendingValue =
+              this.state.data.identity.route === "partner_referral" ? "Community Partner" : "";
+          } else if (this.state.data.identity.route === "partner_referral") {
+            this.pendingValue = text;
+          } else {
+            var docD = this.Voice.parseDigits(text);
+            this.pendingValue = docD.length >= 3 ? docD : text;
+          }
+          this.state.substep = "confirm_doc_or_partner";
+          break;
+        }
+
+        case "confirm_doc_or_partner":
+          if (this.Voice.isYes(text)) {
+            if (this.state.data.identity.route === "partner_referral") {
+              this.state.data.identity.partner_name = this.pendingValue;
+            } else {
+              this.state.data.identity.document_number = this.pendingValue;
+            }
+            this.pendingValue = "";
+            this.state.substep = "contact";
+          } else if (this.Voice.isNo(text)) {
+            this.pendingValue = "";
+            this.state.substep = "doc_or_partner";
+          }
+          break;
+
+        case "contact": {
+          var contact = this.Voice.normalizeContact(text);
+          if (contact.length < 4) {
+            this.lastError = "Please provide a valid phone number or email address.";
+            break;
+          }
+          this.pendingValue = contact;
+          this.state.substep = "confirm_contact";
+          break;
+        }
+
+        case "confirm_contact":
+          if (this.Voice.isYes(text)) {
+            this.state.data.identity.contact_value = this.pendingValue;
+            this.pendingValue = "";
+            await this._sendOtp(this.state.data.identity.contact_value);
+            this.state.substep = "otp";
+          } else if (this.Voice.isNo(text)) {
+            this.pendingValue = "";
+            this.state.substep = "contact";
+          }
+          break;
+
+        case "otp": {
+          var code = this.Voice.parseDigits(text) || text.replace(/\D/g, "");
+          if (code.length < 6) {
+            this.lastError = this._t("otpInvalid");
+            if (this.state.voiceReadingEnabled) {
+              await this.voice.speak(this.lastError, this.lang);
+            }
+            break;
+          }
+          var ok = await this._verifyOtp(this.state.data.identity.contact_value, code);
+          if (ok) {
+            this.state.data.identity.otp_verified = true;
+            if (this.state.voiceReadingEnabled) {
+              await this.voice.speak(this._t("otpVerified"), this.lang);
+            }
+            this.state.substep = "review_submit";
+            this.State.syncDraftToServer(this.apiBase, this.state);
+          } else {
+            this.lastError = this._t("otpInvalid");
+            if (this.state.voiceReadingEnabled) {
+              await this.voice.speak(this.lastError, this.lang);
+            }
+          }
+          break;
+        }
+
+        case "review_submit":
+          if (
+            ["edit", "change", "ቀይር", "አስተካክል"].some(function (k) {
+              return n.indexOf(k) !== -1;
+            })
+          ) {
+            this.state.step = 1;
+            this.state.substep = "name";
+          } else if (this.Voice.isYes(text) || this.Voice.isSubmitCommand(text)) {
+            await this._submitRegistration();
+          }
+          break;
+      }
+
+      this.State.save(this.state);
       this.render();
-      this.runAutoTurn();
-      return;
     }
 
-    if (target.type === "otp" && !this.demoOtpHint) {
-      await this.sendOtp(true); // sends code quietly, prompt below speaks it
+    _handleLanguageChoice(lang) {
+      this.state.data.preferred_language = lang;
+      this.state.data.preferences.language = lang;
+      this.voice.setLanguage(lang);
+      if (this.state.substep === "language") {
+        this.state.step = 1;
+        this.state.substep = "name";
+      }
+      this.State.save(this.state);
+      this.render();
     }
 
-    const refreshedTarget = this.getAutoTarget();
-    if (!refreshedTarget || refreshedTarget.type === "goto") {
-      this.runAutoTurn();
-      return;
+    _goBack() {
+      var order = [
+        "accessibility_ask",
+        "auth_choice",
+        "language",
+        "name",
+        "password",
+        "id_route",
+        "doc_or_partner",
+        "contact",
+        "otp",
+        "review_submit",
+      ];
+      var sub = this.state.substep || "accessibility_ask";
+      if (sub === "login_name" || sub === "login_password") {
+        this.state.substep = sub === "login_password" ? "login_name" : "auth_choice";
+        this.State.save(this.state);
+        this.render();
+        return;
+      }
+      var baseSub = sub
+        .replace(/^confirm_spelled_/, "")
+        .replace(/^confirm_password_reenter$/, "password")
+        .replace(/^confirm_/, "")
+        .replace(/^spell_/, "");
+      var idx = order.indexOf(baseSub);
+      if (idx > 0) {
+        var prev = order[idx - 1];
+        this.state.substep = prev;
+        if (["accessibility_ask", "auth_choice", "language"].indexOf(prev) !== -1) {
+          this.state.step = 0;
+        } else if (["name", "password"].indexOf(prev) !== -1) {
+          this.state.step = 1;
+        } else {
+          this.state.step = 2;
+        }
+      }
+      this.State.save(this.state);
+      this.render();
     }
 
-    this.autoListening = true;
-    this.setVoiceStatus("🔊 Speaking prompt... microphone will open automatically.");
+    async _performLogin(fullName, password) {
+      try {
+        var res = await fetch(this.apiBase + "/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ full_name: fullName, password: password }),
+        });
+        if (!res.ok) {
+          this.lastError = this._t("loginFailed");
+          this.state.substep = "login_name";
+          this.render();
+          if (this.state.voiceReadingEnabled) {
+            await this.voice.speak(this.lastError, this.lang);
+          }
+          return;
+        }
+        var json = await res.json();
+        this.state.accessToken = json.access_token;
+        this.state.data.full_name = json.user.full_name;
+        this.state.data.preferred_language = json.user.preferred_language || this.lang;
+        this.state.data.identity = Object.assign({}, this.state.data.identity, json.user.identity || {});
+        this.state.completed = true;
+        this.state.step = 100;
+        this.state.substep = "career_dashboard";
+        this.state.careerTab = "dashboard";
+        this.State.save(this.state);
+        await this._loadAccessPathData();
+        this.render();
+        if (this.state.voiceReadingEnabled) {
+          await this.voice.speak(this._t("loginSuccess", json.user.full_name), this.lang);
+        }
+      } catch (_err) {
+        this.lastError = "Unable to connect to login service.";
+        this.render();
+      }
+    }
 
-    this.voice.speak(refreshedTarget.prompt, () => {
-      if (!this.store.state.preferences.auto_flow) return;
-      this.setVoiceStatus("🎙️ Listening automatically... Speak now (10s window).");
+    async _sendOtp(contactValue) {
+      try {
+        await fetch(this.apiBase + "/onboarding/send-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contact_value: contactValue, language: this.lang }),
+        });
+      } catch (_err) {
+        this.lastError = "Could not reach OTP service.";
+      }
+    }
 
-      this.voice.startListening(
-        async (transcript) => {
-          this.autoRetryCount = 0;
-          await this.handleAutoTranscript(refreshedTarget, transcript.trim());
+    async _verifyOtp(contactValue, code) {
+      try {
+        var res = await fetch(this.apiBase + "/onboarding/verify-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contact_value: contactValue, code: code }),
+        });
+        return res.ok;
+      } catch (_err) {
+        return false;
+      }
+    }
+
+    async _submitRegistration() {
+      if (this.isSubmitting || this.state.completed) {
+        return;
+      }
+      this.isSubmitting = true;
+      this.voiceLoopActive = false;
+      this.voice.stopListening();
+      this.render();
+
+      if (this.state.voiceReadingEnabled) {
+        await this.voice.speak(this._t("submitting"), this.lang);
+      }
+
+      try {
+        var res = await fetch(this.apiBase + "/onboarding/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(this.state.data),
+        });
+        if (!res.ok) {
+          var errJson = await res.json().catch(function () {
+            return {};
+          });
+          throw new Error(errJson.detail || "Submission failed");
+        }
+        var result = await res.json();
+        this.state.accessToken = result.access_token;
+        this.state.completed = true;
+        this.state.step = 100;
+        this.state.substep = "career_dashboard";
+        this.state.careerTab = "dashboard";
+        this.state.resumeToken = null;
+        this.State.save(this.state);
+        this.isSubmitting = false;
+
+        await this._loadAccessPathData();
+        this.render();
+
+        var doneMsg = this._t("completed", this.state.data.full_name);
+        this._announceLive(doneMsg);
+        if (this.state.voiceReadingEnabled) {
+          await this.voice.speak(doneMsg, this.lang);
+        }
+      } catch (err) {
+        this.isSubmitting = false;
+        this.lastError = (err && err.message) || "Registration error";
+        this.render();
+        if (this.state.voiceReadingEnabled) {
+          await this.voice.speak(this.lastError, this.lang);
+        }
+      }
+    }
+
+    async _loadAccessPathData() {
+      var headers = this.state.accessToken
+        ? { Authorization: "Bearer " + this.state.accessToken }
+        : {};
+      try {
+        var pathsRes = await fetch(this.apiBase + "/career/paths");
+        if (pathsRes.ok) {
+          this.careers = (await pathsRes.json()).careers || [];
+        }
+
+        if (this.state.accessToken) {
+          var dashRes = await fetch(this.apiBase + "/career/dashboard", { headers: headers });
+          if (dashRes.ok) {
+            this.dashboard = await dashRes.json();
+          }
+        }
+
+        var jobUrl = this._buildJobsUrl();
+        var jobsRes = await fetch(jobUrl);
+        if (jobsRes.ok) {
+          this.jobs = (await jobsRes.json()).jobs || [];
+        }
+      } catch (_e) {}
+    }
+
+    _buildJobsUrl() {
+      var qs = [];
+      if (this.jobSupportFilter) {
+        qs.push("support=" + encodeURIComponent(this.jobSupportFilter));
+      }
+      if (this.jobSearchQuery) {
+        qs.push("q=" + encodeURIComponent(this.jobSearchQuery));
+      }
+      return this.apiBase + "/career/jobs" + (qs.length ? "?" + qs.join("&") : "");
+    }
+
+    async _selectCareer(careerId) {
+      if (!this.state.accessToken) {
+        return;
+      }
+      var res = await fetch(this.apiBase + "/career/select", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + this.state.accessToken,
         },
-        (errMsg) => {
-          this.autoRetryCount += 1;
-          if (errMsg.includes("blocked") || this.autoRetryCount >= 3) {
-            this.pauseHandsFreeMode(`${errMsg} Hands-free mode paused. Press Spacebar to try again.`);
+        body: JSON.stringify({ career_id: careerId }),
+      });
+      if (res.ok) {
+        await this._loadAccessPathData();
+        this.state.careerTab = "roadmap";
+        this.State.save(this.state);
+        this.lastNotice = "Career path updated! Your personalized roadmap is ready.";
+        this.render();
+        if (this.state.voiceReadingEnabled) {
+          await this.voice.speak(this.lastNotice, this.lang);
+        }
+      }
+    }
+
+    async _toggleStage(careerId, stageId, completed) {
+      if (!this.state.accessToken) {
+        return;
+      }
+      var res = await fetch(this.apiBase + "/career/progress", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + this.state.accessToken,
+        },
+        body: JSON.stringify({ career_id: careerId, stage_id: stageId, completed: completed }),
+      });
+      if (res.ok) {
+        await this._loadAccessPathData();
+        this.lastNotice = completed ? "Stage marked complete." : "Stage marked incomplete.";
+        this.render();
+        if (this.state.voiceReadingEnabled) {
+          await this.voice.speak(this.lastNotice, this.lang);
+        }
+      }
+    }
+
+    _getAccessPathVoiceSummary() {
+      var tab = this.state.careerTab || "dashboard";
+      var dash = this.dashboard || {};
+      var career = dash.selected_career;
+      if (tab === "dashboard") {
+        return (
+          "AccessPath Career Dashboard. Welcome " +
+          this.state.data.full_name +
+          ". " +
+          (career
+            ? "Selected career: " +
+              career.title +
+              ". Progress: " +
+              (dash.progress_percent || 0) +
+              " percent. " +
+              (dash.recommended_next_stage
+                ? "Next activity: " + dash.recommended_next_stage.title + ". "
+                : "")
+            : "No career selected yet. ") +
+          "Say Dashboard, Careers, Roadmap, or Jobs to navigate."
+        );
+      }
+      if (tab === "careers") {
+        var names = this.careers
+          .map(function (c, i) {
+            return i + 1 + ": " + c.title;
+          })
+          .join(". ");
+        return "Career Discovery. Say Select followed by a career name or number. " + names;
+      }
+      if (tab === "roadmap") {
+        if (!career) {
+          return "No career selected yet. Say Careers to pick one.";
+        }
+        return (
+          "Learning Roadmap for " +
+          career.title +
+          ". Progress: " +
+          (dash.progress_percent || 0) +
+          " percent."
+        );
+      }
+      return (
+        "Career Opportunities. " +
+        this.jobs.length +
+        " accessible jobs available. Use search, filters, or apply by voice or typing."
+      );
+    }
+
+    async _handleAccessPathVoiceCommand(transcript) {
+      var n = this.Voice.norm(transcript);
+      if (n.indexOf("dashboard") !== -1) {
+        this.state.careerTab = "dashboard";
+        this.render();
+        return;
+      }
+      if (n.indexOf("career") !== -1 || n.indexOf("discover") !== -1) {
+        this.state.careerTab = "careers";
+        this.render();
+        return;
+      }
+      if (n.indexOf("roadmap") !== -1 || n.indexOf("progress") !== -1) {
+        this.state.careerTab = "roadmap";
+        this.render();
+        return;
+      }
+      if (n.indexOf("job") !== -1 || n.indexOf("opportunit") !== -1 || n.indexOf("ስራ") !== -1) {
+        this.state.careerTab = "jobs";
+        this.render();
+        return;
+      }
+      if (this.state.careerTab === "careers") {
+        for (var i = 0; i < this.careers.length; i++) {
+          var c = this.careers[i];
+          if (n.indexOf(c.title.toLowerCase()) !== -1 || n === String(i + 1)) {
+            await this._selectCareer(c.id);
             return;
           }
-          this.setVoiceStatus(`${errMsg} Asking again...`);
-          this.runAutoTurn();
         }
-      );
-    }, true);
-  }
-
-  async handleAutoTranscript(target, spoken) {
-    const low = spoken.toLowerCase();
-
-    // Global hands-free voice commands
-    if (/^(stop voice|stop speaking|mute|quiet|pause|አቁም)$/i.test(low)) {
-      this.pauseHandsFreeMode("Voice assistant paused. Press Spacebar to resume.");
-      return;
-    }
-    if (/^(repeat|again|ድገም)$/i.test(low)) {
-      this.runAutoTurn();
-      return;
-    }
-    if (/^(amharic|አማርኛ)$/i.test(low)) {
-      this.store.updatePreferences({ language: "am" });
-      this.syncVoicePrefs();
-      this.render();
-      this.runAutoTurn();
-      return;
-    }
-    if (/^(english|እንግሊዝኛ)$/i.test(low)) {
-      this.store.updatePreferences({ language: "en" });
-      this.syncVoicePrefs();
-      this.render();
-      this.runAutoTurn();
-      return;
-    }
-    if (/^(back|previous|ተመለስ)$/i.test(low)) {
-      this.pendingConfirmation = null;
-      const cur = this.store.state.step;
-      if (cur > 1) this.store.setStep(cur - 1);
-      else if (cur === 1) this.store.setStep(0);
-      this.render();
-      this.runAutoTurn();
-      return;
-    }
-
-    if (target.type === "confirm") {
-      if (/\b(yes|correct|confirm|ok|okay|yeah|yep|next)\b|አዎ|ትክክል|ቀጣይ/i.test(low)) {
-        const { field, value } = this.pendingConfirmation;
-        this.store.updateForm({ [field]: value });
-        this.pendingConfirmation = null;
-        this.render();
-        this.runAutoTurn();
-      } else {
-        this.store.updateForm({ [this.pendingConfirmation.field]: "" });
-        this.pendingConfirmation = null;
-        this.render();
-        this.runAutoTurn();
       }
-      return;
     }
 
-    if (target.type === "gate_yes_no") {
-      if (/\b(no|nope|standard|normal)\b|አይ|መደበኛ/i.test(low)) {
-        this.selectDisabilityGate(false);
-      } else {
-        this.selectDisabilityGate(true);
-        this.store.updatePreferences({ auto_flow: true, stt_enabled: true, tts_enabled: true });
-        this.runAutoTurn();
-      }
-      return;
-    }
-
-    if (target.type === "gate_profile") {
-      if (/low vision|vision|contrast|zoom|ዝቅተኛ/i.test(low)) {
-        this.selectProfile("low_vision");
-      } else if (/physical|motor|hand|አካል/i.test(low)) {
-        this.selectProfile("physical_motor");
-      } else if (/standard|normal|መደበኛ/i.test(low)) {
-        this.selectProfile("standard");
-      } else {
-        this.selectProfile("blind");
-      }
-      this.store.setStep(1);
-      this.render();
-      this.runAutoTurn();
-      return;
-    }
-
-    if (target.type === "identity_route") {
-      let route = "national_kebele_id";
-      if (/refugee|unhcr|rrs|ስደተኞች/i.test(low)) route = "refugee_id";
-      else if (/alternative|other|ሌላ/i.test(low)) route = "alt_doc";
-      else if (/partner|referral|no id|አጋር/i.test(low)) route = "partner_referral";
-
-      this.store.updateForm({ identity_route: route, route_confirmed: true });
-      this.render();
-      this.runAutoTurn();
-      return;
-    }
-
-    if (target.type === "otp") {
-      if (/\b(next|skip|continue)\b|ቀጣይ/i.test(low)) {
-        this.store.setStep(3);
-        this.render();
-        this.runAutoTurn();
-        return;
-      }
-      const digits = spoken.replace(/\D/g, "");
-      this.store.updateForm({ otp_code: digits || spoken });
-      const ok = await this.verifyOtp(true);
-      if (ok) {
-        this.store.setStep(3);
-      }
-      this.render();
-      this.runAutoTurn();
-      return;
-    }
-
-    if (target.type === "support_needs") {
-      if (/\b(next|done|continue|none|skip)\b|ቀጣይ/i.test(low)) {
-        this.store.setStep(4);
-        this.render();
-        this.runAutoTurn();
-        return;
-      }
-      const needs = new Set(this.store.state.form.support_needs || []);
-      if (/screen|reader|ስክሪን/i.test(low)) needs.add("screen_reader");
-      if (/extra|time|ጊዜ/i.test(low)) needs.add("extra_time");
-      if (/sign|language|ምልክት/i.test(low)) needs.add("sign_language");
-      if (/workplace|job|ስራ/i.test(low)) needs.add("accessible_workplace");
-      this.store.updateForm({ support_needs: Array.from(needs) });
-      this.render();
-      this.voice.speak("Support option added. Say another option or say Next.", () => this.runAutoTurn(), true);
-      return;
-    }
-
-    if (target.type === "review_submit") {
-      if (/\b(submit|yes|confirm|finish|send)\b|አስገባ|አዎ/i.test(low)) {
-        this.store.updatePreferences({ auto_flow: false });
-        await this.submitRegistration();
-      } else {
-        this.store.setStep(1);
-        this.render();
-        this.runAutoTurn();
-      }
-      return;
-    }
-
-    if (target.type === "field") {
-      this.store.updateForm({ [target.field]: spoken });
-      this.pendingConfirmation = {
-        field: target.field,
-        label: target.label,
-        value: spoken,
-        isSecret: target.isSecret
-      };
-      this.render();
-      this.runAutoTurn();
-    }
-  }
-
-  getStepAnnouncementText() {
-    const { step, has_disability, preferences } = this.store.state;
-    if (step === 0) {
-      if (has_disability === null) {
-        return preferences.language === "am"
-          ? "እንኳን ወደ ALX በደህና መጡ። የአካል ጉዳት ወይም የተደራሽነት ድጋፍ ይፈልጋሉ? አዎ ወይም አይ ይምረጡ።"
-          : "Welcome to ALX. Are you a person with a disability or do you need accessibility features? Choose Yes or No.";
-      }
-      return this.t("gateTitle") + ". " + this.t("gateSubtitle");
-    }
-    if (step === 0.5) return "Standard ALX platform active.";
-    if (step === 1) return this.t("step1Title") + ". " + this.t("fullNameLabel");
-    if (step === 2) return this.t("step2Title") + ". " + this.t("contactLabel");
-    if (step === 3) return this.t("step3Title") + ". " + this.t("supportLegend");
-    if (step === 4) return this.t("step4Title") + ". " + this.t("readSummaryBtn");
-    return "";
-  }
-
-  announceCurrentStep(force = false) {
-    if (this.store.state.preferences.auto_flow) return;
-    const text = this.getStepAnnouncementText();
-    if (text) this.voice.speak(text, null, force);
-  }
-
-  selectDisabilityGate(isDisabled) {
-    this.voiceUnlocked = true;
-    this.store.setHasDisability(isDisabled);
-    if (!isDisabled) {
-      this.store.updatePreferences({
-        profile_type: "standard",
-        contrast_mode: "default",
-        zoom_percent: 100,
-        tts_enabled: false,
-        stt_enabled: false,
-        auto_flow: false
-      });
-      this.store.setStep(0.5);
-    } else {
-      this.store.updatePreferences({ tts_enabled: true });
-      this.store.setStep(0);
-    }
-    this.syncVoicePrefs();
-    this.render();
-    if (!this.store.state.preferences.auto_flow) this.announceCurrentStep();
-  }
-
-  selectProfile(profileType) {
-    if (profileType === "blind" || profileType === "low_literacy") {
-      this.store.updatePreferences({
-        profile_type: profileType,
-        tts_enabled: true,
-        stt_enabled: true,
-        auto_flow: true
-      });
-    } else if (profileType === "low_vision") {
-      this.store.updatePreferences({
-        profile_type: profileType,
-        contrast_mode: "dark_yellow",
-        zoom_percent: 130,
-        tts_enabled: true,
-        auto_flow: false
-      });
-      this.showCustomContrast = true;
-    } else if (profileType === "physical_motor") {
-      this.store.updatePreferences({
-        profile_type: profileType,
-        tts_enabled: true,
-        stt_enabled: true,
-        auto_flow: true
-      });
-    } else {
-      this.store.updatePreferences({ profile_type: "standard", auto_flow: false });
-    }
-    this.syncVoicePrefs();
-    this.render();
-  }
-
-  async askAIAssistant(prompt) {
-    if (!prompt.trim()) return;
-    this.aiReply = "Thinking...";
-    this.render();
-    try {
-      const res = await fetch(`${this.apiBase}/ai/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          language: this.store.state.preferences.language,
-          step: Math.floor(this.store.state.step)
-        })
-      });
-      if (!res.ok) throw new Error("AI service unavailable");
-      const data = await res.json();
-      this.aiReply = data.response;
-      this.render();
-      this.voice.speak(this.aiReply);
-    } catch (_) {
-      this.aiReply = "Could not reach backend AI. Make sure uvicorn is running on port 8000.";
-      this.render();
-    }
-  }
-
-  async sendOtp(silent = false) {
-    const contact = this.store.state.form.contact_value?.trim();
-    if (!contact) {
-      if (!silent) this.setVoiceStatus("Please enter or speak your phone number first.");
-      return;
-    }
-    try {
-      const res = await fetch(`${this.apiBase}/onboarding/send-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contact_value: contact,
-          language: this.store.state.preferences.language
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Could not send code");
-      this.demoOtpHint = data.demo_code || "";
-      this.render();
-      if (!silent) {
-        this.voice.speak(`Verification code sent. Your code is ${this.demoOtpHint.split("").join(" ")}.`);
-      }
-    } catch (_) {
-      if (!silent) this.setVoiceStatus("Could not send verification code. Check backend connection.");
-    }
-  }
-
-  async verifyOtp(silent = false) {
-    const { contact_value, otp_code } = this.store.state.form;
-    if (!contact_value || !otp_code) return false;
-    try {
-      const res = await fetch(`${this.apiBase}/onboarding/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contact_value, code: otp_code })
-      });
-      if (!res.ok) throw new Error("Invalid code");
-      this.store.updateForm({ otp_verified: true });
-      this.render();
-      if (!silent) this.voice.speak("Phone number verified successfully.");
-      return true;
-    } catch (_) {
-      this.store.updateForm({ otp_verified: false });
-      this.render();
-      if (!silent) this.voice.speak("Invalid or expired verification code. Please try again.");
-      return false;
-    }
-  }
-
-  async submitRegistration() {
-    const { preferences, form } = this.store.state;
-    if (!form.full_name.trim() || !form.password || form.password.length < 4) {
-      this.setVoiceStatus("Please enter your full name and a password of at least 4 characters.");
-      this.voice.speak("Please enter your full name and a password of at least 4 characters.");
-      this.store.setStep(1);
-      this.render();
-      return;
-    }
-    if (!form.contact_value.trim()) {
-      this.setVoiceStatus("Please enter your phone number in Step 2.");
-      this.voice.speak("Please enter your phone number in Step 2.");
-      this.store.setStep(2);
-      this.render();
-      return;
-    }
-
-    try {
-      const response = await fetch(`${this.apiBase}/onboarding/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          full_name: form.full_name,
-          password: form.password,
-          preferred_language: preferences.language,
-          preferences,
-          identity: {
-            route: form.identity_route,
-            document_number: form.document_number,
-            partner_name: form.partner_name,
-            contact_value: form.contact_value,
-            otp_verified: form.otp_verified
-          },
-          support_needs: form.support_needs
-        })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.detail || "Registration failed");
-      }
-
-      const data = await response.json();
-      if (data.access_token) {
-        localStorage.setItem("db_session_token", data.access_token);
-      }
-
-      this.store.state.registered = true;
-      this.store.setStep(5);
-      this.render();
-      this.voice.speak(this.t("successTitle") + " " + this.t("successBody"), null, true);
-    } catch (err) {
-      console.error("Registration submit error:", err);
-      this.setVoiceStatus(err.message);
-      this.voice.speak("Submission failed. Please check that the backend server is running and try again.");
-    }
-  }
-
-  readSummaryAloud() {
-    const { form, preferences } = this.store.state;
-    const summary = preferences.language === "am"
-      ? `ማጠቃለያ። ሙሉ ስም ${form.full_name || "አልተሰጠም"}። ስልክ ቁጥር ${form.contact_value || "አልተሰጠም"}። ትክክል ከሆነ ምዝገባውን አስገባ የሚለውን ይጫኑ።`
-      : `Summary review. Full name: ${form.full_name || "not provided"}. ` +
-        `Verification route: ${form.identity_route}. ` +
-        `Phone number: ${form.contact_value || "not provided"}. ` +
-        `Verification status: ${form.otp_verified ? "verified" : "not verified yet"}. ` +
-        `Profile: ${preferences.profile_type}. ` +
-        `Press Submit Registration if everything is correct, or Back to edit.`;
-    this.voice.speak(summary, null, true);
-  }
-
-  render() {
-    const { step, preferences, form } = this.store.state;
-    const voiceActive = preferences.tts_enabled;
-    const autoActive = preferences.auto_flow;
-
-    this.innerHTML = `
-      <style>
-        .db-shell { background: var(--db-card-bg); color: var(--db-fg); border: 3px solid var(--db-border); border-radius: 14px; padding: 1.5rem; box-shadow: 0 6px 24px rgba(0,0,0,0.14); }
-        .db-toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem; padding-bottom: 1.25rem; margin-bottom: 1.5rem; border-bottom: 3px solid var(--db-border); align-items: center; }
-        .db-tool-btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; min-height: 56px; min-width: 56px; padding: 0.7rem 1.1rem; font-size: 1rem; font-weight: 800; border-radius: 10px; border: 3px solid var(--db-border); background: var(--db-bg); color: var(--db-fg); cursor: pointer; }
-        .db-tool-btn[aria-pressed="true"] { background: var(--db-accent); color: var(--db-accent-fg); }
-        .db-icon { font-size: 1.35rem; line-height: 1; }
-        .db-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; margin: 1.25rem 0; }
-        .db-choice-card { display: flex; flex-direction: column; align-items: flex-start; text-align: start; gap: 0.4rem; padding: 1.25rem; min-height: 82px; border-radius: 12px; border: 3px solid var(--db-border); background: var(--db-bg); color: var(--db-fg); font-size: 1.1rem; font-weight: 800; cursor: pointer; }
-        .db-choice-card[aria-checked="true"] { background: var(--db-accent); color: var(--db-accent-fg); }
-        .db-field { margin-bottom: 1.4rem; }
-        .db-label { display: block; font-weight: 800; margin-bottom: 0.5rem; font-size: 1.1rem; }
-        .db-input, .db-select { width: 100%; box-sizing: border-box; min-height: 56px; padding: 0.75rem 1rem; font-size: 1.1rem; border-radius: 8px; border: 3px solid var(--db-border); background: var(--db-bg); color: var(--db-fg); }
-        .db-nav-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-top: 2rem; padding-top: 1.25rem; border-top: 3px solid var(--db-border); }
-        .db-primary { background: var(--db-accent); color: var(--db-accent-fg); border: 3px solid var(--db-border); min-height: 56px; padding: 0.8rem 1.6rem; font-size: 1.15rem; font-weight: 900; border-radius: 10px; cursor: pointer; }
-        .db-panel { border: 2px dashed var(--db-border); border-radius: 10px; padding: 1rem; margin: 1rem 0; }
-        .recording-active { background: #c62828 !important; color: #ffffff !important; animation: pulse 1.3s infinite; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
-      </style>
-
-      <section class="db-shell" aria-label="Accessible Onboarding Module">
-        <nav class="db-toolbar" aria-label="Accessibility Controls">
-          <button type="button" class="db-tool-btn" id="btn-contrast" aria-expanded="${this.showCustomContrast}">
-            <span class="db-icon" aria-hidden="true">&#127912;</span>
-            <span>${this.t("toolbarContrast")}</span>
-          </button>
-
-          <button type="button" class="db-tool-btn" id="btn-zoom-in" aria-label="${this.t("toolbarZoomIn")}">
-            <span class="db-icon" aria-hidden="true">&#128269;+</span>
-            <span>${this.t("toolbarZoomIn")} (${preferences.zoom_percent}%)</span>
-          </button>
-
-          <button type="button" class="db-tool-btn" id="btn-zoom-out" aria-label="${this.t("toolbarZoomOut")}">
-            <span class="db-icon" aria-hidden="true">&#128269;-</span>
-            <span>${this.t("toolbarZoomOut")}</span>
-          </button>
-
-          <button type="button" class="db-tool-btn" id="btn-voice" aria-pressed="${voiceActive}">
-            <span class="db-icon" aria-hidden="true">&#128266;</span>
-            <span>${this.t("toolbarVoiceToggle")}: ${voiceActive ? "ON" : "OFF"}</span>
-          </button>
-
-          <button type="button" class="db-tool-btn" id="btn-handsfree" aria-pressed="${autoActive}">
-            <span class="db-icon" aria-hidden="true">&#127897;</span>
-            <span>Hands-Free Blind Mode: ${autoActive ? "ON" : "OFF"}</span>
-          </button>
-
-          ${voiceActive || autoActive ? `
-            <button type="button" class="db-tool-btn" id="btn-cancel-voice">
-              <span class="db-icon" aria-hidden="true">&#9209;</span>
-              <span>${this.t("cancelVoiceBtn")}</span>
-            </button>
-          ` : ""}
-
-          <label class="db-tool-btn" style="padding:0.25rem 0.75rem;">
-            <span class="db-icon" aria-hidden="true">&#127760;</span>
-            <span>${this.t("toolbarLanguage")}:</span>
-            <select id="db-lang-select" class="db-select" style="min-height:44px;width:auto;border:2px solid var(--db-border);">
-              <option value="en" ${preferences.language === "en" ? "selected" : ""}>English</option>
-              <option value="am" ${preferences.language === "am" ? "selected" : ""}>አማርኛ</option>
-            </select>
-          </label>
-
-          <button type="button" class="db-tool-btn" id="btn-toolbar-register">
-            <span class="db-icon" aria-hidden="true">&#128221;</span>
-            <span>${this.t("toolbarRegister")}</span>
-          </button>
-        </nav>
-
-        ${this.showCustomContrast ? this.renderContrastPanel(preferences) : ""}
-
-        <div aria-live="polite" class="db-panel" id="ai-assistant-bar">
-          <strong>&#129302; AI Accessibility Assistant:</strong>
-          <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.5rem;">
-            <input id="inp-ai-ask" class="db-input" style="flex:1;min-width:200px;" placeholder="Ask for help or guidance..." />
-            <button type="button" class="db-tool-btn" id="btn-mic-ai">&#127897; Speak</button>
-            <button type="button" class="db-tool-btn" id="btn-ai-ask">Ask AI</button>
-            <button type="button" class="db-tool-btn" id="btn-repeat-audio">&#128226; Repeat Step</button>
-          </div>
-          <p id="voice-status-text" style="margin:0.5rem 0 0;font-weight:700;display:${this.voiceStatus ? "block" : "none"};">${this.escapeHtml(this.voiceStatus)}</p>
-          ${this.aiReply ? `<p style="margin:0.75rem 0 0;"><strong>Assistant:</strong> ${this.escapeHtml(this.aiReply)}</p>` : ""}
-        </div>
-
-        ${this.pendingConfirmation ? this.renderConfirmationBanner() : ""}
-        ${this.renderContent(step, preferences, form)}
-      </section>
-    `;
-    this.bindEvents();
-  }
-
-  renderContrastPanel(preferences) {
-    return `
-      <div class="db-panel" aria-label="${this.t("contrastPresetsTitle")}">
-        <h3 style="margin-top:0;">${this.t("contrastPresetsTitle")}</h3>
-        <div style="display:flex;flex-wrap:wrap;gap:0.6rem;margin-bottom:1rem;">
-          <button type="button" class="db-tool-btn" data-contrast="default" aria-pressed="${preferences.contrast_mode === "default"}">${this.t("presetDefault")}</button>
-          <button type="button" class="db-tool-btn" data-contrast="dark_yellow" aria-pressed="${preferences.contrast_mode === "dark_yellow"}">${this.t("presetDarkYellow")}</button>
-          <button type="button" class="db-tool-btn" data-contrast="light_yellow" aria-pressed="${preferences.contrast_mode === "light_yellow"}">${this.t("presetLightYellow")}</button>
-          <button type="button" class="db-tool-btn" data-contrast="dark_white" aria-pressed="${preferences.contrast_mode === "dark_white"}">${this.t("presetDarkWhite")}</button>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:1rem;align-items:center;">
-          <label style="font-weight:800;">Custom Background:
-            <input type="color" id="inp-custom-bg" value="${this.escapeHtml(preferences.custom_bg)}" style="width:56px;height:44px;vertical-align:middle;" />
-          </label>
-          <label style="font-weight:800;">Custom Text:
-            <input type="color" id="inp-custom-fg" value="${this.escapeHtml(preferences.custom_fg)}" style="width:56px;height:44px;vertical-align:middle;" />
-          </label>
-          <button type="button" class="db-tool-btn" id="btn-apply-custom-contrast">Apply Custom Colors</button>
-        </div>
-      </div>
-    `;
-  }
-
-  renderConfirmationBanner() {
-    const { label, value, isSecret } = this.pendingConfirmation;
-    return `
-      <div class="db-panel" role="alert" style="border-style:solid;border-width:3px;">
-        <p style="margin:0 0 0.75rem;font-size:1.15rem;">
-          <strong>${this.t("confirmHeardPrefix")}</strong>
-          ${isSecret ? "•••••••• (captured)" : this.escapeHtml(value)} <em>(${this.escapeHtml(label)})</em>
-        </p>
-        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
-          <button type="button" class="db-primary" id="btn-confirm-yes">&#9989; ${this.t("confirmYes")}</button>
-          <button type="button" class="db-tool-btn" id="btn-confirm-edit">&#9998; ${this.t("confirmEdit")}</button>
-        </div>
-      </div>
-    `;
-  }
-
-  renderContent(step, preferences, form) {
-    if (step === 0) {
-      if (this.store.state.has_disability === null) {
-        return `
-          <div>
-            <h2>Welcome to ALX — Accessibility Assistant</h2>
-            <p style="font-size:1.15rem;">Do you have a disability or need visual, voice, or motor accessibility customization?</p>
-            <button type="button" class="db-primary" id="btn-start-handsfree" style="width:100%;margin-bottom:1rem;">
-              &#127897; Press Spacebar or Tap Here for Automatic Blind Voice Registration
-            </button>
-            <div class="db-grid">
-              <button type="button" class="db-choice-card" id="btn-gate-yes">
-                <span>&#9855; Yes — Customize Accessibility &amp; Register</span>
-              </button>
-              <button type="button" class="db-choice-card" id="btn-gate-no">
-                <span>&#128100; No — Continue to Standard ALX Platform</span>
-              </button>
-            </div>
-          </div>
-        `;
-      }
-
-      return `
-        <div>
-          <h2>${this.t("gateTitle")}</h2>
-          <p>${this.t("gateSubtitle")}</p>
-          <div class="db-grid" role="radiogroup" aria-label="Accessibility Profile">
-            <button type="button" class="db-choice-card" data-profile="blind" aria-checked="${preferences.profile_type === "blind"}"><span>&#128266; ${this.t("optBlind")}</span></button>
-            <button type="button" class="db-choice-card" data-profile="low_vision" aria-checked="${preferences.profile_type === "low_vision"}"><span>&#128065; ${this.t("optLowVision")}</span></button>
-            <button type="button" class="db-choice-card" data-profile="physical_motor" aria-checked="${preferences.profile_type === "physical_motor"}"><span>&#9000; ${this.t("optPhysical")}</span></button>
-            <button type="button" class="db-choice-card" data-profile="low_literacy" aria-checked="${preferences.profile_type === "low_literacy"}"><span>&#128214; ${this.t("optLowLiteracy")}</span></button>
-            <button type="button" class="db-choice-card" data-profile="standard" aria-checked="${preferences.profile_type === "standard"}"><span>&#128100; ${this.t("optStandard")}</span></button>
-          </div>
-
-          <div class="db-nav-row">
-            <button type="button" class="db-tool-btn" id="btn-reset-gate">&larr; Back</button>
-            <button type="button" class="db-primary" id="btn-start-signup">${this.t("startSignupBtn")} &rarr;</button>
-          </div>
-        </div>
-      `;
-    }
-
-    if (step === 0.5) {
-      return `
-        <div>
-          <h2>ALX Standard Learning Platform</h2>
-          <p>You are using the standard ALX experience. You can still activate accessibility tools anytime from the top bar.</p>
-          <div class="db-nav-row">
-            <button type="button" class="db-tool-btn" id="btn-reset-gate">&larr; Accessibility Check</button>
-            <button type="button" class="db-primary" id="btn-start-signup">${this.t("startSignupBtn")} &rarr;</button>
-          </div>
-        </div>
-      `;
-    }
-
-    if (step === 1) {
-      return `
-        <div>
-          <h2>${this.t("step1Title")}</h2>
-          <div class="db-field">
-            <label class="db-label" for="inp-full-name">${this.t("fullNameLabel")}</label>
-            <div style="display:flex;gap:0.5rem;">
-              <input class="db-input" id="inp-full-name" type="text" value="${this.escapeHtml(form.full_name)}" autocomplete="name" />
-              <button type="button" class="db-tool-btn" id="btn-mic-name">&#127897; Speak</button>
-            </div>
-          </div>
-          <div class="db-field">
-            <label class="db-label" for="inp-password">${this.t("passwordLabel")}</label>
-            <div style="display:flex;gap:0.5rem;">
-              <input class="db-input" id="inp-password" type="password" value="${this.escapeHtml(form.password)}" placeholder="At least 4 characters" autocomplete="new-password" />
-              <button type="button" class="db-tool-btn" id="btn-mic-pass">&#127897; Speak</button>
-            </div>
-          </div>
-          ${this.renderNav(0, 2)}
-        </div>
-      `;
-    }
-
-    if (step === 2) {
-      const isPartner = form.identity_route === "partner_referral";
-      return `
-        <div>
-          <h2>${this.t("step2Title")}</h2>
-
-          <div class="db-field">
-            <label class="db-label" for="sel-id-route">${this.t("idRouteLabel")}</label>
-            <select class="db-select" id="sel-id-route">
-              <option value="national_kebele_id" ${form.identity_route === "national_kebele_id" ? "selected" : ""}>${this.t("routeNational")}</option>
-              <option value="refugee_id" ${form.identity_route === "refugee_id" ? "selected" : ""}>${this.t("routeRefugee")}</option>
-              <option value="alt_doc" ${form.identity_route === "alt_doc" ? "selected" : ""}>${this.t("routeAltDoc")}</option>
-              <option value="partner_referral" ${form.identity_route === "partner_referral" ? "selected" : ""}>${this.t("routePartner")}</option>
-            </select>
-          </div>
-
-          ${isPartner ? `
-            <div class="db-field">
-              <label class="db-label" for="inp-partner-name">${this.t("partnerNameLabel")}</label>
-              <div style="display:flex;gap:0.5rem;">
-                <input class="db-input" id="inp-partner-name" type="text" value="${this.escapeHtml(form.partner_name)}" />
-                <button type="button" class="db-tool-btn" id="btn-mic-partner">&#127897; Speak</button>
-              </div>
-            </div>
-          ` : `
-            <div class="db-field">
-              <label class="db-label" for="inp-doc-num">${this.t("idNumberLabel")}</label>
-              <div style="display:flex;gap:0.5rem;">
-                <input class="db-input" id="inp-doc-num" type="text" value="${this.escapeHtml(form.document_number)}" />
-                <button type="button" class="db-tool-btn" id="btn-mic-doc">&#127897; Speak</button>
-              </div>
-            </div>
-          `}
-
-          <div class="db-field">
-            <label class="db-label" for="inp-contact">${this.t("contactLabel")}</label>
-            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-              <input class="db-input" style="flex:1;" id="inp-contact" type="tel" value="${this.escapeHtml(form.contact_value)}" placeholder="+251..." />
-              <button type="button" class="db-tool-btn" id="btn-mic-contact">&#127897; Speak</button>
-              <button type="button" class="db-tool-btn" id="btn-send-otp">Send Code</button>
-            </div>
-          </div>
-
-          <div class="db-panel">
-            <label class="db-label" for="inp-otp">Accessible OTP Code (SMS / Audio Readout — No Visual CAPTCHA)</label>
-            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-              <input class="db-input" style="flex:1;" id="inp-otp" type="text" inputmode="numeric" value="${this.escapeHtml(form.otp_code)}" placeholder="6-digit code" />
-              <button type="button" class="db-tool-btn" id="btn-mic-otp">&#127897; Speak</button>
-              <button type="button" class="db-primary" id="btn-verify-otp">Verify Code</button>
-            </div>
-            ${this.demoOtpHint ? `<p style="margin:0.5rem 0 0;">Demo OTP sent: <strong>${this.escapeHtml(this.demoOtpHint)}</strong></p>` : ""}
-            <p style="margin:0.5rem 0 0;">Status: <strong>${form.otp_verified ? "✅ Verified" : "Pending verification"}</strong></p>
-          </div>
-
-          ${this.renderNav(1, 3)}
-        </div>
-      `;
-    }
-
-    if (step === 3) {
-      const needs = form.support_needs || [];
-      return `
-        <div>
-          <h2>${this.t("step3Title")}</h2>
-          <fieldset style="border:3px solid var(--db-border);border-radius:10px;padding:1rem;">
-            <legend style="font-weight:800;">${this.t("supportLegend")}</legend>
-            ${[
-              ["screen_reader", this.t("suppScreenReader")],
-              ["extra_time", this.t("suppExtraTime")],
-              ["sign_language", this.t("suppSignLanguage")],
-              ["accessible_workplace", this.t("suppWorkplace")]
-            ].map(([val, label]) => `
-              <label style="display:flex;align-items:center;gap:0.75rem;min-height:52px;font-weight:700;">
-                <input type="checkbox" class="chk-support" value="${val}" ${needs.includes(val) ? "checked" : ""} style="width:24px;height:24px;" />
-                <span>${label}</span>
-              </label>
-            `).join("")}
-          </fieldset>
-          ${this.renderNav(2, 4)}
-        </div>
-      `;
-    }
-
-    if (step === 4) {
-      return `
-        <div>
-          <h2>${this.t("step4Title")}</h2>
-          <div class="db-panel">
-            <p><strong>${this.t("fullNameLabel")}:</strong> ${this.escapeHtml(form.full_name) || "—"} <button type="button" class="db-tool-btn" data-goto="1" style="min-height:40px;padding:0.25rem 0.75rem;">${this.t("confirmEdit")}</button></p>
-            <p><strong>${this.t("idRouteLabel")}:</strong> ${this.escapeHtml(form.identity_route)} <button type="button" class="db-tool-btn" data-goto="2" style="min-height:40px;padding:0.25rem 0.75rem;">${this.t("confirmEdit")}</button></p>
-            <p><strong>${this.t("contactLabel")}:</strong> ${this.escapeHtml(form.contact_value) || "—"} (${form.otp_verified ? "✅ Verified" : "Unverified"})</p>
-            <p><strong>Support Needs:</strong> ${form.support_needs.length ? this.escapeHtml(form.support_needs.join(", ")) : "None selected"} <button type="button" class="db-tool-btn" data-goto="3" style="min-height:40px;padding:0.25rem 0.75rem;">${this.t("confirmEdit")}</button></p>
-          </div>
-          <div class="db-nav-row">
-            <button type="button" class="db-tool-btn" data-goto="3">&larr; ${this.t("backBtn")}</button>
-            <button type="button" class="db-tool-btn" id="btn-read-summary">&#128266; ${this.t("readSummaryBtn")}</button>
-            <button type="button" class="db-primary" id="btn-submit">${this.t("submitBtn")}</button>
-          </div>
-        </div>
-      `;
-    }
-
-    return `
-      <div>
-        <h2>&#9989; ${this.t("successTitle")}</h2>
-        <p>${this.t("successBody")}</p>
-        <button type="button" class="db-tool-btn" id="btn-restart">Reset Session</button>
-      </div>
-    `;
-  }
-
-  renderNav(prev, next) {
-    return `<div class="db-nav-row"><button type="button" class="db-tool-btn" data-goto="${prev}">&larr; ${this.t("backBtn")}</button><button type="button" class="db-primary" data-goto="${next}">${this.t("nextBtn")} &rarr;</button></div>`;
-  }
-
-  bindEvents() {
-    this.querySelector("#btn-contrast")?.addEventListener("click", () => {
-      this.showCustomContrast = !this.showCustomContrast;
-      this.render();
-    });
-
-    this.querySelectorAll("[data-contrast]").forEach(btn => btn.addEventListener("click", () => {
-      this.store.updatePreferences({ contrast_mode: btn.getAttribute("data-contrast") });
-      this.render();
-    }));
-
-    this.querySelector("#btn-apply-custom-contrast")?.addEventListener("click", () => {
-      const bg = this.querySelector("#inp-custom-bg")?.value || "#000000";
-      const fg = this.querySelector("#inp-custom-fg")?.value || "#FFFF00";
-      this.store.updatePreferences({ contrast_mode: "custom", custom_bg: bg, custom_fg: fg });
-      this.render();
-    });
-
-    this.querySelector("#btn-zoom-in")?.addEventListener("click", () => {
-      const next = Math.min(200, this.store.state.preferences.zoom_percent + 15);
-      this.store.updatePreferences({ zoom_percent: next });
-      this.render();
-    });
-
-    this.querySelector("#btn-zoom-out")?.addEventListener("click", () => {
-      const next = Math.max(85, this.store.state.preferences.zoom_percent - 15);
-      this.store.updatePreferences({ zoom_percent: next });
-      this.render();
-    });
-
-    this.querySelector("#btn-voice")?.addEventListener("click", () => {
-      const active = !this.store.state.preferences.tts_enabled;
-      this.store.updatePreferences({ tts_enabled: active });
-      this.syncVoicePrefs();
-      this.render();
-      if (active) this.announceCurrentStep();
-    });
-
-    this.querySelector("#btn-handsfree")?.addEventListener("click", () => {
-      if (this.store.state.preferences.auto_flow) {
-        this.pauseHandsFreeMode("Hands-free blind mode turned OFF.");
-      } else {
-        this.startHandsFreeSession();
-      }
-    });
-
-    this.querySelector("#btn-start-handsfree")?.addEventListener("click", () => {
-      this.startHandsFreeSession();
-    });
-
-    this.querySelector("#btn-cancel-voice")?.addEventListener("click", () => {
-      this.pauseHandsFreeMode("Voice assistant paused. Press Spacebar to resume.");
-    });
-
-    this.querySelector("#btn-repeat-audio")?.addEventListener("click", () => {
-      if (this.store.state.preferences.auto_flow) this.runAutoTurn();
-      else this.announceCurrentStep(true);
-    });
-
-    const triggerAiAsk = () => {
-      const q = this.querySelector("#inp-ai-ask")?.value || "";
-      if (q.trim()) this.askAIAssistant(q);
-    };
-
-    this.querySelector("#btn-ai-ask")?.addEventListener("click", triggerAiAsk);
-    this.querySelector("#inp-ai-ask")?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        triggerAiAsk();
-      }
-    });
-
-    this.querySelector("#btn-mic-ai")?.addEventListener("click", () => {
-      const aiBtn = this.querySelector("#btn-mic-ai");
-      if (aiBtn.classList.contains("recording-active")) {
-        this.voice.stopListening();
-        return;
-      }
-      aiBtn.textContent = "🛑 Stop";
-      aiBtn.classList.add("recording-active");
-      this.setVoiceStatus("🎙️ Listening for your question (10s window)...");
-
-      this.voice.startListening(
-        (transcript) => {
-          this.setVoiceStatus("");
-          this.askAIAssistant(transcript);
-        },
-        (errMsg) => {
-          aiBtn.innerHTML = "&#127897; Speak";
-          aiBtn.classList.remove("recording-active");
-          this.setVoiceStatus(errMsg);
+    async _fetchHelp(prompt) {
+      try {
+        var res = await fetch(this.apiBase + "/ai/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: prompt, language: this.lang, step: this.state.step || 1 }),
+        });
+        if (res.ok) {
+          return (await res.json()).response;
         }
-      );
-    });
+      } catch (_e) {}
+      return "Speak your answer clearly, or type and press Enter.";
+    }
 
-    this.querySelector("#db-lang-select")?.addEventListener("change", (e) => {
-      this.store.updatePreferences({ language: e.target.value });
-      this.syncVoicePrefs();
+    _cycleContrast() {
+      var order = ["default", "dark_yellow", "dark_white", "light_yellow"];
+      var cur = this.state.data.preferences.contrast_mode || "default";
+      this.state.data.preferences.contrast_mode = order[(order.indexOf(cur) + 1) % order.length];
+      this.State.save(this.state);
+      this._applyVisualPrefs();
+      this._announceLive("Contrast set to " + this.state.data.preferences.contrast_mode);
+    }
+
+    _zoomBy(delta) {
+      var cur = this.state.data.preferences.zoom_percent || 100;
+      var next = Math.max(80, Math.min(200, cur + delta));
+      this.state.data.preferences.zoom_percent = next;
+      this.State.save(this.state);
+      this._applyVisualPrefs();
       this.render();
-      if (this.store.state.preferences.auto_flow) this.runAutoTurn();
-      else this.announceCurrentStep();
-    });
+      this._announceLive("Zoom set to " + next + " percent");
+    }
 
-    this.querySelector("#btn-toolbar-register")?.addEventListener("click", () => {
-      this.store.setStep(1);
-      this.render();
-      if (this.store.state.preferences.auto_flow) this.runAutoTurn();
-      else this.announceCurrentStep();
-    });
+    render() {
+      try {
+        var s = this.state.substep || "accessibility_ask";
+        var d = this.state.data;
+        var promptText = this._getCurrentPromptText();
 
-    this.querySelector("#btn-gate-yes")?.addEventListener("click", () => this.selectDisabilityGate(true));
-    this.querySelector("#btn-gate-no")?.addEventListener("click", () => this.selectDisabilityGate(false));
-    this.querySelector("#btn-reset-gate")?.addEventListener("click", () => {
-      this.store.setHasDisability(null);
-      this.store.setStep(0);
-      this.render();
-      this.announceCurrentStep();
-    });
+        this.innerHTML =
+          '<section class="db-widget-root" role="region" aria-label="Digital Bridge and AccessPath">' +
+          '<div id="db-aria-live" class="db-sr-only" aria-live="assertive" aria-atomic="true"></div>' +
+          '<div class="db-toolbar" role="toolbar" aria-label="Accessibility Controls">' +
+          '<button type="button" class="db-btn db-btn-primary" id="db-btn-voice-toggle">' +
+          (this.voiceLoopActive ? this._t("btnVoiceToggleOn") : this._t("btnVoiceToggleOff")) +
+          "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-repeat">' +
+          this._t("btnRepeat") +
+          "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-lang">' +
+          this._t("btnLang") +
+          "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-contrast">' +
+          this._t("btnContrast") +
+          "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-zoom-out">' +
+          this._t("btnZoomOut") +
+          "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-zoom-in">' +
+          this._t("btnZoomIn") +
+          " (" +
+          d.preferences.zoom_percent +
+          "%)</button>" +
+          "</div>" +
+          '<div class="db-status-banner" id="db-voice-status" role="status" aria-live="polite">' +
+          (this.voiceLoopActive
+            ? this._t("listeningStatus")
+            : this.state.voiceReadingEnabled
+            ? this._t("pausedStatus")
+            : "Standard / Screen-Reader Mode. Press Space or Voice button anytime for hands-free voice.") +
+          "</div>" +
+          (this.lastNotice
+            ? '<div class="db-status-banner" role="status" aria-live="polite">' + this.lastNotice + "</div>"
+            : "") +
+          (this.lastError
+            ? '<div class="db-error-banner" role="alert" aria-live="assertive">' + this.lastError + "</div>"
+            : "") +
+          (s === "career_dashboard"
+            ? this._renderAccessPath()
+            : this._renderAuthOrOnboarding(s, d, promptText)) +
+          "</section>";
 
-    this.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
-      const profile = btn.getAttribute("data-profile");
-      this.selectProfile(profile);
-      if (profile === "blind" || profile === "low_literacy") {
-        this.store.setStep(1);
-        this.render();
-        this.runAutoTurn();
+        this._bindEvents();
+        var heading = this.querySelector("#db-step-heading");
+        if (heading) {
+          heading.focus();
+        }
+      } catch (err) {
+        this.innerHTML =
+          '<div role="alert" class="db-error-banner">Render error: ' +
+          String(err && err.message ? err.message : err) +
+          "</div>";
       }
-    }));
+    }
 
-    this.querySelector("#btn-start-signup")?.addEventListener("click", () => {
-      this.store.setStep(1);
-      this.render();
-      if (this.store.state.preferences.auto_flow) this.runAutoTurn();
-      else this.announceCurrentStep();
-    });
+    _renderAuthOrOnboarding(s, d, promptText) {
+      var labels = this._t("routeLabels") || {};
 
-    this.querySelector("#btn-confirm-yes")?.addEventListener("click", () => {
-      if (!this.pendingConfirmation) return;
-      const { field, value } = this.pendingConfirmation;
-      this.store.updateForm({ [field]: value });
-      this.pendingConfirmation = null;
-      this.setVoiceStatus("");
-      this.render();
-      if (this.store.state.preferences.auto_flow) this.runAutoTurn();
-      else this.voice.speak("Saved.");
-    });
-
-    this.querySelector("#btn-confirm-edit")?.addEventListener("click", () => {
-      if (this.pendingConfirmation) {
-        this.store.updateForm({ [this.pendingConfirmation.field]: "" });
+      if (s === "accessibility_ask" || s === "auth_choice") {
+        return (
+          "<div>" +
+          '<h2 id="db-step-heading" tabindex="-1">' +
+          promptText +
+          "</h2>" +
+          (s === "accessibility_ask"
+            ? '<div class="db-actions-row">' +
+              '<button type="button" class="db-btn db-btn-primary" id="db-btn-yes">Yes — Turn On Voice Reading (Y)</button>' +
+              '<button type="button" class="db-btn" id="db-btn-no">No — Use Keyboard / Screen Reader (N)</button>' +
+              "</div>"
+            : "") +
+          '<div class="db-card" style="margin-top:1rem;">' +
+          '<h3 style="margin-top:0;">Choose Account Action</h3>' +
+          '<div class="db-actions-row">' +
+          '<button type="button" class="db-btn db-btn-primary" id="db-go-login">1. Login to AccessPath</button>' +
+          '<button type="button" class="db-btn db-btn-primary" id="db-go-signup">2. Sign Up (Accessible Registration)</button>' +
+          '<button type="button" class="db-btn" id="db-first-contrast">Switch Contrast Theme</button>' +
+          "</div>" +
+          "</div>" +
+          "</div>"
+        );
       }
-      this.pendingConfirmation = null;
-      this.setVoiceStatus("Cleared. Please speak or type your answer again.");
-      this.render();
-      if (this.store.state.preferences.auto_flow) this.runAutoTurn();
-      else this.voice.speak("Cleared. Please speak or type your answer again.");
-    });
 
-    const setupMicButton = (btnId, fieldName, fieldLabel, isSecret = false) => {
-      const btn = this.querySelector(btnId);
-      if (!btn) return;
-      let recording = false;
+      var stepLabel =
+        s.indexOf("login_") === 0
+          ? "Login to AccessPath"
+          : this.state.step === 2
+          ? this._t("step2Title")
+          : this._t("step1Title");
 
-      btn.addEventListener("click", () => {
-        if (!recording) {
-          recording = true;
-          btn.textContent = "🛑 Stop & Save";
-          btn.classList.add("recording-active");
-          this.setVoiceStatus(`🎙️ Listening for ${fieldLabel}... Speak at your own pace.`);
+      var html = '<form id="db-wizard-form" novalidate>';
+      html += '<p style="margin-top:0; font-weight:700;">' + stepLabel + "</p>";
+      html += '<h2 id="db-step-heading" tabindex="-1" style="margin-top:0.25rem;">' + promptText + "</h2>";
 
-          this.voice.startListening(
-            (transcript) => {
-              recording = false;
-              btn.innerHTML = "&#127897; Speak";
-              btn.classList.remove("recording-active");
-              const cleaned = transcript.trim();
+      if (s === "language") {
+        html +=
+          '<div class="db-actions-row">' +
+          '<button type="button" class="db-btn db-btn-primary" id="db-pick-en">1. English</button>' +
+          '<button type="button" class="db-btn db-btn-primary" id="db-pick-am">2. አማርኛ (Amharic)</button>' +
+          "</div>";
+      }
 
-              if (/^(stop speaking|mute|quiet)$/i.test(cleaned)) {
-                this.pauseHandsFreeMode("Voice reader paused.");
-                return;
-              }
+      var textInputSteps = [
+        "login_name",
+        "login_password",
+        "name",
+        "spell_name",
+        "password",
+        "confirm_password_reenter",
+        "doc_or_partner",
+        "contact",
+        "otp",
+      ];
+      if (textInputSteps.indexOf(s) !== -1) {
+        var isPass = s === "password" || s === "confirm_password_reenter" || s === "login_password";
+        html +=
+          '<div style="margin-top:1rem;">' +
+          '<label for="db-text-input" class="db-sr-only">' +
+          promptText +
+          "</label>" +
+          '<input id="db-text-input" class="db-input" type="' +
+          (isPass ? "password" : "text") +
+          '" autocomplete="off" placeholder="' +
+          (s === "spell_name"
+            ? "Type or spell letters (e.g. A B E B E done)"
+            : "Type or dictate your answer") +
+          '" value="' +
+          (s === "spell_name" ? this.spellBuffer : "") +
+          '" />' +
+          "</div>";
+      }
 
-              this.store.updateForm({ [fieldName]: cleaned });
-              this.pendingConfirmation = { field: fieldName, label: fieldLabel, value: cleaned, isSecret };
-              this.voiceStatus = `Captured ${fieldLabel}.`;
-              this.render();
-              this.voice.speak(
-                isSecret
-                  ? "Password saved. Select Yes Correct or Edit."
-                  : `${this.t("confirmHeardPrefix")} ${cleaned}.`
-              );
-            },
-            (errMsg) => {
-              recording = false;
-              btn.innerHTML = "&#127897; Speak";
-              btn.classList.remove("recording-active");
-              this.setVoiceStatus(errMsg || "Could not capture audio. Please try again.");
-              this.voice.speak("Could not capture audio. Please try again.");
-            }
+      if (s === "id_route") {
+        html +=
+          '<fieldset style="border:none; padding:0; margin:1rem 0;">' +
+          '<legend class="db-sr-only">Verification Route</legend>' +
+          '<button type="button" class="db-option-card db-route-btn" data-route="1">1. ' +
+          labels.national_kebele_id +
+          "</button>" +
+          '<button type="button" class="db-option-card db-route-btn" data-route="2">2. ' +
+          labels.refugee_id +
+          "</button>" +
+          '<button type="button" class="db-option-card db-route-btn" data-route="3">3. ' +
+          labels.alt_doc +
+          "</button>" +
+          '<button type="button" class="db-option-card db-route-btn" data-route="4">4. ' +
+          labels.partner_referral +
+          "</button>" +
+          "</fieldset>";
+      }
+
+      if (s.indexOf("confirm_") === 0 && s !== "confirm_password_reenter") {
+        html +=
+          '<div class="db-actions-row">' +
+          '<button type="button" class="db-btn db-btn-primary" id="db-btn-yes">Yes / አዎ (Y)</button>' +
+          '<button type="button" class="db-btn" id="db-btn-no">No — Spell / Retry (N)</button>' +
+          "</div>";
+      }
+
+      if (s === "review_submit") {
+        var docRef =
+          d.identity.route === "partner_referral"
+            ? d.identity.partner_name
+            : d.identity.document_number;
+        html +=
+          '<div class="db-status-banner">' +
+          '<p style="margin:0.25rem 0;"><strong>Name:</strong> ' +
+          d.full_name +
+          "</p>" +
+          '<p style="margin:0.25rem 0;"><strong>ID Route:</strong> ' +
+          (labels[d.identity.route] || d.identity.route) +
+          "</p>" +
+          (docRef ? '<p style="margin:0.25rem 0;"><strong>Reference:</strong> ' + docRef + "</p>" : "") +
+          '<p style="margin:0.25rem 0;"><strong>Contact:</strong> ' +
+          d.identity.contact_value +
+          "</p>" +
+          "</div>";
+      }
+
+      html += '<div class="db-actions-row">';
+      html += '<button type="button" class="db-btn" id="db-btn-back">' + this._t("btnBack") + "</button>";
+      if (s === "review_submit") {
+        html += '<button type="submit" class="db-btn db-btn-primary">' + this._t("btnSubmit") + "</button>";
+      } else if (
+        ["language", "id_route"].indexOf(s) === -1 &&
+        (s.indexOf("confirm_") !== 0 || s === "confirm_password_reenter")
+      ) {
+        html += '<button type="submit" class="db-btn db-btn-primary">' + this._t("btnNext") + "</button>";
+      }
+      html += "</div></form>";
+      return html;
+    }
+
+    _renderAccessPath() {
+      var tab = this.state.careerTab || "dashboard";
+      var dash = this.dashboard || {};
+      var user = dash.user || this.state.data;
+      var career = dash.selected_career;
+      var pct = dash.progress_percent || 0;
+      var completedIds = dash.completed_stage_ids || [];
+
+      var nav =
+        '<nav aria-label="AccessPath Navigation" class="db-actions-row" style="margin-bottom:1.25rem;">' +
+        '<button type="button" class="db-btn ' +
+        (tab === "dashboard" ? "db-btn-primary" : "") +
+        '" data-tab="dashboard">Dashboard</button>' +
+        '<button type="button" class="db-btn ' +
+        (tab === "careers" ? "db-btn-primary" : "") +
+        '" data-tab="careers">Explore Careers (6)</button>' +
+        '<button type="button" class="db-btn ' +
+        (tab === "roadmap" ? "db-btn-primary" : "") +
+        '" data-tab="roadmap">My Learning Roadmap</button>' +
+        '<button type="button" class="db-btn ' +
+        (tab === "jobs" ? "db-btn-primary" : "") +
+        '" data-tab="jobs">Career Opportunities</button>' +
+        '<button type="button" class="db-btn" id="db-btn-logout">Logout</button>' +
+        "</nav>";
+
+      if (tab === "careers") {
+        var cards = this.careers
+          .map(function (c, i) {
+            var isSelected = career && career.id === c.id;
+            return (
+              '<article class="db-card">' +
+              '<h3 style="margin-top:0;">' +
+              (i + 1) +
+              ". " +
+              c.title +
+              (isSelected ? " (Selected)" : "") +
+              "</h3>" +
+              "<p>" +
+              c.description +
+              "</p>" +
+              "<p><strong>Required Skills:</strong> " +
+              c.required_skills.join(", ") +
+              "</p>" +
+              "<p><strong>Learning Requirements:</strong> " +
+              c.learning_requirements +
+              "</p>" +
+              "<p><strong>Opportunities:</strong> " +
+              c.opportunities.join(", ") +
+              "</p>" +
+              "<p><strong>Roadmap Stages:</strong> " +
+              c.roadmap.length +
+              " stages</p>" +
+              '<button type="button" class="db-btn db-btn-primary db-select-career" data-career-id="' +
+              c.id +
+              '">' +
+              (isSelected ? "View Roadmap" : "Select " + c.title) +
+              "</button>" +
+              "</article>"
+            );
+          })
+          .join("");
+        return (
+          nav +
+          '<h2 id="db-step-heading" tabindex="-1">Career Discovery &amp; Selection</h2><div class="db-grid">' +
+          cards +
+          "</div>"
+        );
+      }
+
+      if (tab === "roadmap") {
+        if (!career) {
+          return (
+            nav +
+            '<h2 id="db-step-heading" tabindex="-1">Personalized Learning Roadmap</h2>' +
+            "<p>You have not selected a career path yet.</p>" +
+            '<button type="button" class="db-btn db-btn-primary" data-tab="careers">Explore Careers Now</button>'
           );
+        }
+        var stagesHtml = career.roadmap
+          .map(function (st, idx) {
+            var isDone = completedIds.indexOf(st.id) !== -1;
+            return (
+              '<article class="db-card">' +
+              '<h3 style="margin-top:0;">Stage ' +
+              (idx + 1) +
+              ": " +
+              st.title +
+              " — " +
+              (isDone ? "Completed" : "In Progress") +
+              "</h3>" +
+              "<p><strong>Objectives:</strong> " +
+              st.objectives +
+              "</p>" +
+              "<p><strong>Skills:</strong> " +
+              st.skills.join(", ") +
+              "</p>" +
+              "<p><strong>Resources:</strong> " +
+              st.resources +
+              "</p>" +
+              '<button type="button" class="db-btn ' +
+              (isDone ? "" : "db-btn-primary") +
+              ' db-toggle-stage" data-career-id="' +
+              career.id +
+              '" data-stage-id="' +
+              st.id +
+              '" data-next="' +
+              !isDone +
+              '">' +
+              (isDone ? "Mark Incomplete" : "Mark Stage Completed") +
+              "</button>" +
+              "</article>"
+            );
+          })
+          .join("");
+        return (
+          nav +
+          '<h2 id="db-step-heading" tabindex="-1">Roadmap: ' +
+          career.title +
+          " (" +
+          pct +
+          "% Complete)</h2>" +
+          '<div class="db-progress-bar" role="progressbar" aria-valuenow="' +
+          pct +
+          '" aria-valuemin="0" aria-valuemax="100">' +
+          '<div class="db-progress-fill" style="width:' +
+          pct +
+          '%;"></div></div>' +
+          '<div style="margin-top:1rem;">' +
+          stagesHtml +
+          "</div>"
+        );
+      }
+
+      if (tab === "jobs") {
+        var self = this;
+        var jobsHtml = this.jobs.length
+          ? this.jobs
+              .map(function (j) {
+                var isApplying = self.applyingJobId === j.id;
+                return (
+                  '<article class="db-card">' +
+                  '<h3 style="margin-top:0;">' +
+                  j.title +
+                  " — " +
+                  j.hiringOrganization.name +
+                  "</h3>" +
+                  "<p><strong>Location:</strong> " +
+                  j.jobLocationType +
+                  "</p>" +
+                  "<p>" +
+                  j.description +
+                  "</p>" +
+                  "<p><strong>Accommodations Offered:</strong> " +
+                  (j.accommodations_offered || []).join(", ") +
+                  "</p>" +
+                  '<button type="button" class="db-btn db-btn-primary db-open-apply" data-job-id="' +
+                  j.id +
+                  '">' +
+                  (isApplying ? "Close Application Form" : "Apply (Voice or Typing)") +
+                  "</button>" +
+                  (isApplying
+                    ? '<form class="db-apply-form" data-job-id="' +
+                      j.id +
+                      '" style="margin-top:1rem;">' +
+                      '<label for="db-app-pitch"><strong>Your Application Pitch (Type or Dictate):</strong></label>' +
+                      '<textarea id="db-app-pitch" class="db-textarea" required placeholder="Explain why you are a good fit..."></textarea>' +
+                      '<div class="db-actions-row"><button type="button" class="db-btn" id="db-dictate-pitch">Dictate Pitch by Voice</button></div>' +
+                      '<label for="db-app-accom" style="display:block;margin-top:0.75rem;"><strong>Interview Accommodation Request (Optional, No Medical Proof):</strong></label>' +
+                      '<input id="db-app-accom" class="db-input" type="text" placeholder="e.g., Screen-reader test, extra time, Amharic interpreter" />' +
+                      '<div class="db-actions-row">' +
+                      '<button type="button" class="db-btn" id="db-dictate-accom">Dictate Accommodation</button>' +
+                      '<button type="submit" class="db-btn db-btn-primary">Submit Job Application</button>' +
+                      "</div></form>"
+                    : "") +
+                  "</article>"
+                );
+              })
+              .join("")
+          : '<p class="db-card">No matching jobs found. Try clearing filters or posting an employer opportunity.</p>';
+
+        return (
+          nav +
+          '<h2 id="db-step-heading" tabindex="-1">Career Opportunities &amp; Accessible Job Gateway</h2>' +
+          '<form id="db-job-filter-form" class="db-card">' +
+          '<label for="db-job-q"><strong>Search Jobs (Type or Voice):</strong></label>' +
+          '<input id="db-job-q" class="db-input" type="text" value="' +
+          this.jobSearchQuery +
+          '" placeholder="e.g., developer, support, analyst" />' +
+          '<label for="db-job-support" style="display:block;margin-top:0.75rem;"><strong>Private "Support I Need" Filter:</strong></label>' +
+          '<select id="db-job-support" class="db-select">' +
+          '<option value="">All inclusive jobs</option>' +
+          '<option value="screen_reader_compatible" ' +
+          (this.jobSupportFilter === "screen_reader_compatible" ? "selected" : "") +
+          ">Screen-reader compatible (NVDA / TalkBack)</option>" +
+          '<option value="flexible_hours" ' +
+          (this.jobSupportFilter === "flexible_hours" ? "selected" : "") +
+          ">Flexible hours</option>" +
+          '<option value="voice_first_tools" ' +
+          (this.jobSupportFilter === "voice_first_tools" ? "selected" : "") +
+          ">Voice-first tools</option>" +
+          '<option value="jaws_nvda_provided" ' +
+          (this.jobSupportFilter === "jaws_nvda_provided" ? "selected" : "") +
+          ">JAWS / NVDA provided</option>" +
+          '<option value="audio_training" ' +
+          (this.jobSupportFilter === "audio_training" ? "selected" : "") +
+          ">Audio training</option>" +
+          "</select>" +
+          '<div class="db-actions-row">' +
+          '<button type="submit" class="db-btn db-btn-primary">Search / Apply Filter</button>' +
+          '<button type="button" class="db-btn" id="db-dictate-job-search">Dictate Search</button>' +
+          '<button type="button" class="db-btn" id="db-toggle-employer">' +
+          (this.showEmployerForm ? "Hide Employer Form" : "Employer: Post Inclusive Job") +
+          "</button>" +
+          "</div></form>" +
+          (this.showEmployerForm
+            ? '<form id="db-employer-form" class="db-card">' +
+              '<h3 style="margin-top:0;">Employer Form — Post Job &amp; Accommodations</h3>' +
+              '<label for="db-emp-title">Job Title</label>' +
+              '<input id="db-emp-title" class="db-input" required />' +
+              '<label for="db-emp-name" style="display:block;margin-top:0.5rem;">Employer Name</label>' +
+              '<input id="db-emp-name" class="db-input" required />' +
+              '<label for="db-emp-loc" style="display:block;margin-top:0.5rem;">Location</label>' +
+              '<input id="db-emp-loc" class="db-input" value="Addis Ababa / Remote" required />' +
+              '<label for="db-emp-desc" style="display:block;margin-top:0.5rem;">Description</label>' +
+              '<textarea id="db-emp-desc" class="db-textarea" required></textarea>' +
+              '<label for="db-emp-accom" style="display:block;margin-top:0.5rem;">Accommodations Offered (comma-separated)</label>' +
+              '<input id="db-emp-accom" class="db-input" value="screen_reader_compatible, flexible_hours" />' +
+              '<div class="db-actions-row"><button type="submit" class="db-btn db-btn-primary">Publish Accessible Job</button></div>' +
+              "</form>"
+            : "") +
+          jobsHtml
+        );
+      }
+
+      return (
+        nav +
+        '<h2 id="db-step-heading" tabindex="-1">Welcome to AccessPath, ' +
+        this.state.data.full_name +
+        "</h2>" +
+        '<div class="db-grid">' +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Selected Career &amp; Progress</h3>' +
+        "<p><strong>Career Path:</strong> " +
+        (career ? career.title : "Not selected yet") +
+        "</p>" +
+        "<p><strong>Progress:</strong> " +
+        pct +
+        "% (" +
+        (dash.completed_count || 0) +
+        " of " +
+        (dash.total_stages || 0) +
+        " stages)</p>" +
+        '<div class="db-progress-bar" role="progressbar" aria-valuenow="' +
+        pct +
+        '" aria-valuemin="0" aria-valuemax="100">' +
+        '<div class="db-progress-fill" style="width:' +
+        pct +
+        '%;"></div></div>' +
+        "<p style='margin-top:0.75rem;'><strong>Recommended Next Activity:</strong> " +
+        (dash.recommended_next_stage
+          ? dash.recommended_next_stage.title
+          : career
+          ? "All stages complete! Explore jobs."
+          : "Explore the 6 career pathways.") +
+        "</p>" +
+        '<div class="db-actions-row">' +
+        (career
+          ? '<button type="button" class="db-btn db-btn-primary" data-tab="roadmap">Resume Roadmap</button>'
+          : '<button type="button" class="db-btn db-btn-primary" data-tab="careers">Explore 6 Careers</button>') +
+        "</div></section>" +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Profile &amp; Accessibility</h3>' +
+        "<p><strong>Name:</strong> " +
+        (user.full_name || this.state.data.full_name) +
+        "</p>" +
+        "<p><strong>Language:</strong> " +
+        (this.lang === "am" ? "Amharic" : "English") +
+        "</p>" +
+        "<p><strong>Contrast:</strong> " +
+        this.state.data.preferences.contrast_mode +
+        "</p>" +
+        "<p><strong>Zoom:</strong> " +
+        this.state.data.preferences.zoom_percent +
+        "%</p>" +
+        "<p><strong>Acquired Skills:</strong> " +
+        (dash.acquired_skills && dash.acquired_skills.length
+          ? dash.acquired_skills.join(", ")
+          : "Complete stages to build skills") +
+        "</p>" +
+        "</section></div>"
+      );
+    }
+
+    _bindEvents() {
+      var self = this;
+      var on = function (sel, fn) {
+        var el = self.querySelector(sel);
+        if (el) {
+          el.addEventListener("click", fn);
+        }
+      };
+
+      on("#db-btn-voice-toggle", function () {
+        if (self.voiceLoopActive) {
+          self.voiceLoopActive = false;
+          self.voice.stopAll();
+          self.render();
         } else {
-          this.voice.stopListening();
+          self.state.voiceReadingEnabled = true;
+          self.State.save(self.state);
+          self.startHandsFreeLoop();
         }
       });
-    };
+      on("#db-btn-repeat", function () {
+        self.voice.speak(self._getCurrentPromptText(), self.lang);
+      });
+      on("#db-btn-lang", function () {
+        self._handleLanguageChoice(self.lang === "en" ? "am" : "en");
+      });
+      on("#db-btn-contrast", function () {
+        self._cycleContrast();
+      });
+      on("#db-first-contrast", function () {
+        self._cycleContrast();
+      });
+      on("#db-btn-zoom-out", function () {
+        self._zoomBy(-25);
+      });
+      on("#db-btn-zoom-in", function () {
+        self._zoomBy(25);
+      });
+      on("#db-btn-back", function () {
+        self._goBack();
+      });
+      on("#db-go-login", function () {
+        self.state.substep = "login_name";
+        self.State.save(self.state);
+        self.render();
+      });
+      on("#db-go-signup", function () {
+        self.state.substep = "language";
+        self.State.save(self.state);
+        self.render();
+      });
+      on("#db-pick-en", function () {
+        self._handleLanguageChoice("en");
+      });
+      on("#db-pick-am", function () {
+        self._handleLanguageChoice("am");
+      });
+      on("#db-btn-yes", function () {
+        self._handleTurnInput("yes");
+      });
+      on("#db-btn-no", function () {
+        self._handleTurnInput("no");
+      });
+      on("#db-btn-logout", function () {
+        self.voiceLoopActive = false;
+        self.voice.stopAll();
+        self.state = self.State.resetAll();
+        self.dashboard = null;
+        self.render();
+      });
 
-    setupMicButton("#btn-mic-name", "full_name", this.t("fullNameLabel"));
-    setupMicButton("#btn-mic-pass", "password", this.t("passwordLabel"), true);
-    setupMicButton("#btn-mic-doc", "document_number", this.t("idNumberLabel"));
-    setupMicButton("#btn-mic-partner", "partner_name", this.t("partnerNameLabel"));
-    setupMicButton("#btn-mic-contact", "contact_value", this.t("contactLabel"));
-    setupMicButton("#btn-mic-otp", "otp_code", "OTP Code");
+      this.querySelectorAll(".db-route-btn").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          self._handleTurnInput(btn.getAttribute("data-route"));
+        });
+      });
 
-    this.querySelector("#inp-full-name")?.addEventListener("input", (e) => this.store.updateForm({ full_name: e.target.value }));
-    this.querySelector("#inp-password")?.addEventListener("input", (e) => this.store.updateForm({ password: e.target.value }));
-    this.querySelector("#sel-id-route")?.addEventListener("change", (e) => {
-      this.store.updateForm({ identity_route: e.target.value, route_confirmed: true });
-      this.render();
-    });
-    this.querySelector("#inp-doc-num")?.addEventListener("input", (e) => this.store.updateForm({ document_number: e.target.value }));
-    this.querySelector("#inp-partner-name")?.addEventListener("input", (e) => this.store.updateForm({ partner_name: e.target.value }));
-    this.querySelector("#inp-contact")?.addEventListener("input", (e) => this.store.updateForm({ contact_value: e.target.value, otp_verified: false }));
-    this.querySelector("#inp-otp")?.addEventListener("input", (e) => this.store.updateForm({ otp_code: e.target.value }));
+      this.querySelectorAll("[data-tab]").forEach(function (btn) {
+        btn.addEventListener("click", async function () {
+          self.state.careerTab = btn.getAttribute("data-tab");
+          self.State.save(self.state);
+          await self._loadAccessPathData();
+          self.render();
+        });
+      });
 
-    this.querySelector("#btn-send-otp")?.addEventListener("click", () => this.sendOtp());
-    this.querySelector("#btn-verify-otp")?.addEventListener("click", () => this.verifyOtp());
+      this.querySelectorAll(".db-select-career").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          self._selectCareer(btn.getAttribute("data-career-id"));
+        });
+      });
 
-    this.querySelectorAll(".chk-support").forEach(chk => chk.addEventListener("change", () => {
-      const selected = Array.from(this.querySelectorAll(".chk-support:checked")).map(el => el.value);
-      this.store.updateForm({ support_needs: selected });
-    }));
+      this.querySelectorAll(".db-toggle-stage").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          self._toggleStage(
+            btn.getAttribute("data-career-id"),
+            btn.getAttribute("data-stage-id"),
+            btn.getAttribute("data-next") === "true"
+          );
+        });
+      });
 
-    this.querySelectorAll("[data-goto]").forEach(btn => btn.addEventListener("click", () => {
-      this.pendingConfirmation = null;
-      this.setVoiceStatus("");
-      this.store.setStep(parseInt(btn.getAttribute("data-goto"), 10));
-      this.render();
-      if (this.store.state.preferences.auto_flow) this.runAutoTurn();
-      else this.announceCurrentStep();
-    }));
+      var jobFilterForm = this.querySelector("#db-job-filter-form");
+      if (jobFilterForm) {
+        jobFilterForm.addEventListener("submit", async function (e) {
+          e.preventDefault();
+          var qEl = self.querySelector("#db-job-q");
+          var supEl = self.querySelector("#db-job-support");
+          self.jobSearchQuery = qEl ? qEl.value.trim() : "";
+          self.jobSupportFilter = supEl ? supEl.value : "";
+          await self._loadAccessPathData();
+          self.render();
+        });
+      }
 
-    this.querySelector("#btn-read-summary")?.addEventListener("click", () => this.readSummaryAloud());
-    this.querySelector("#btn-submit")?.addEventListener("click", () => this.submitRegistration());
-    this.querySelector("#btn-restart")?.addEventListener("click", () => {
-      localStorage.removeItem(this.store.storageKey);
-      localStorage.removeItem("db_session_token");
-      window.location.reload();
-    });
+      on("#db-dictate-job-search", async function () {
+        await self.voice.speak("Say a job title or skill to search.", self.lang);
+        var r = await self.voice.listenOnce(self.lang);
+        if (r && r.transcript) {
+          self.jobSearchQuery = r.transcript;
+          await self._loadAccessPathData();
+          self.render();
+        }
+      });
+
+      on("#db-toggle-employer", function () {
+        self.showEmployerForm = !self.showEmployerForm;
+        self.render();
+      });
+
+      var empForm = this.querySelector("#db-employer-form");
+      if (empForm) {
+        empForm.addEventListener("submit", async function (e) {
+          e.preventDefault();
+          var title = self.querySelector("#db-emp-title").value.trim();
+          var employer = self.querySelector("#db-emp-name").value.trim();
+          var location = self.querySelector("#db-emp-loc").value.trim();
+          var desc = self.querySelector("#db-emp-desc").value.trim();
+          var accomRaw = self.querySelector("#db-emp-accom").value;
+          var accoms = accomRaw
+            .split(",")
+            .map(function (s) {
+              return s.trim();
+            })
+            .filter(Boolean);
+
+          var res = await fetch(self.apiBase + "/career/jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: title,
+              employer_name: employer,
+              location: location,
+              description: desc,
+              accommodations_offered: accoms,
+            }),
+          });
+          if (res.ok) {
+            self.showEmployerForm = false;
+            self.lastNotice = "Job posting published with accommodations.";
+            await self._loadAccessPathData();
+            self.render();
+          }
+        });
+      }
+
+      this.querySelectorAll(".db-open-apply").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var id = btn.getAttribute("data-job-id");
+          self.applyingJobId = self.applyingJobId === id ? null : id;
+          self.render();
+        });
+      });
+
+      on("#db-dictate-pitch", async function () {
+        await self.voice.speak("Speak your application pitch after the tone.", self.lang);
+        var r = await self.voice.listenOnce(self.lang, {
+          initialWaitMs: 12000,
+          trailingSilenceMs: 2800,
+        });
+        var pitchEl = self.querySelector("#db-app-pitch");
+        if (pitchEl && r && r.transcript) {
+          pitchEl.value = (pitchEl.value ? pitchEl.value + " " : "") + r.transcript;
+        }
+      });
+
+      on("#db-dictate-accom", async function () {
+        await self.voice.speak("Speak any interview accommodations you need.", self.lang);
+        var r = await self.voice.listenOnce(self.lang, {
+          initialWaitMs: 12000,
+          trailingSilenceMs: 2800,
+        });
+        var acEl = self.querySelector("#db-app-accom");
+        if (acEl && r && r.transcript) {
+          acEl.value = r.transcript;
+        }
+      });
+
+      this.querySelectorAll(".db-apply-form").forEach(function (form) {
+        form.addEventListener("submit", async function (e) {
+          e.preventDefault();
+          var jobId = form.getAttribute("data-job-id");
+          var pitch = self.querySelector("#db-app-pitch").value.trim();
+          var accom = self.querySelector("#db-app-accom").value.trim();
+          var headers = { "Content-Type": "application/json" };
+          if (self.state.accessToken) {
+            headers.Authorization = "Bearer " + self.state.accessToken;
+          }
+          var res = await fetch(self.apiBase + "/career/apply", {
+            method: "POST",
+            headers: headers,
+            body: JSON.stringify({
+              job_id: jobId,
+              applicant_name: self.state.data.full_name,
+              applicant_contact: self.state.data.identity.contact_value || "registered-user",
+              voice_pitch_transcript: pitch,
+              interview_accommodations: accom,
+              support_needs: self.state.data.support_needs,
+            }),
+          });
+          if (res.ok) {
+            self.applyingJobId = null;
+            self.lastNotice = "Job application submitted successfully.";
+            self.render();
+            if (self.state.voiceReadingEnabled) {
+              await self.voice.speak(self.lastNotice, self.lang);
+            }
+          }
+        });
+      });
+
+      var wizForm = this.querySelector("#db-wizard-form");
+      if (wizForm) {
+        wizForm.addEventListener("submit", async function (e) {
+          e.preventDefault();
+          if (self.state.substep === "review_submit") {
+            await self._submitRegistration();
+            return;
+          }
+          var input = self.querySelector("#db-text-input");
+          if (input) {
+            var val = input.value.trim();
+            if (self.state.substep === "spell_name") {
+              await self._handleTurnInput(/done$/i.test(val) ? val : val + " done");
+            } else {
+              await self._handleTurnInput(val);
+            }
+          }
+        });
+      }
+    }
   }
-}
 
-customElements.define("digital-bridge-onboarding", DigitalBridgeOnboarding);
+  if (!global.customElements.get("digital-bridge-onboarding")) {
+    global.customElements.define("digital-bridge-onboarding", DigitalBridgeOnboarding);
+  }
+})(window);

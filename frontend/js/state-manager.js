@@ -1,14 +1,44 @@
-class DigitalBridgeStateManager {
-  constructor() {
-    this.storageKey = "db_onboarding_state_v3";
-    this.state = this.loadState();
-  }
+(function (global) {
+  var STORAGE_KEY = "digital_bridge_accesspath_v5";
 
-  getDefaultState() {
-    return {
-      step: 0,
-      registered: false,
-      has_disability: null,
+  var VALID_SUBSTEPS = [
+    "accessibility_ask",
+    "auth_choice",
+    "login_name",
+    "login_password",
+    "language",
+    "name",
+    "confirm_name",
+    "spell_name",
+    "confirm_spelled_name",
+    "password",
+    "confirm_password_reenter",
+    "id_route",
+    "confirm_id_route",
+    "doc_or_partner",
+    "confirm_doc_or_partner",
+    "contact",
+    "confirm_contact",
+    "otp",
+    "review_submit",
+    "done",
+    "career_dashboard",
+  ];
+
+  var DEFAULT_STATE = {
+    step: 0,
+    substep: "accessibility_ask",
+    voiceModeAsked: false,
+    voiceReadingEnabled: false,
+    completed: false,
+    resumeToken: null,
+    accessToken: null,
+    careerTab: "dashboard",
+    selectedCareerPreview: null,
+    data: {
+      full_name: "",
+      password: "",
+      preferred_language: "en",
       preferences: {
         profile_type: "standard",
         contrast_mode: "default",
@@ -17,83 +47,99 @@ class DigitalBridgeStateManager {
         zoom_percent: 100,
         tts_enabled: false,
         stt_enabled: false,
-        auto_flow: false,
-        language: "en"
+        language: "en",
       },
-      form: {
-        full_name: "",
-        password: "",
-        identity_route: "national_kebele_id",
-        route_confirmed: false,
+      identity: {
+        route: "national_kebele_id",
         document_number: "",
         partner_name: "",
         contact_value: "",
-        otp_code: "",
         otp_verified: false,
-        support_needs: []
+      },
+      support_needs: [],
+    },
+  };
+
+  function clone(obj) {
+    return JSON.parse(JSON.stringify(obj));
+  }
+
+  function load() {
+    try {
+      var raw = global.localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        return clone(DEFAULT_STATE);
       }
-    };
-  }
-
-  loadState() {
-    const defaults = this.getDefaultState();
-    const saved = localStorage.getItem(this.storageKey);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return {
-          ...defaults,
-          ...parsed,
-          preferences: { ...defaults.preferences, ...(parsed.preferences || {}) },
-          form: { ...defaults.form, ...(parsed.form || {}) }
-        };
-      } catch (_) {}
-    }
-    return defaults;
-  }
-
-  saveState() {
-    localStorage.setItem(this.storageKey, JSON.stringify(this.state));
-  }
-
-  setStep(step) {
-    this.state.step = step;
-    this.saveState();
-  }
-
-  setHasDisability(val) {
-    this.state.has_disability = val;
-    this.saveState();
-  }
-
-  updatePreferences(prefs) {
-    this.state.preferences = { ...this.state.preferences, ...prefs };
-    this.saveState();
-    this.applyVisualPreferences();
-  }
-
-  updateForm(fields) {
-    this.state.form = { ...this.state.form, ...fields };
-    this.saveState();
-  }
-
-  applyVisualPreferences() {
-    const { contrast_mode, zoom_percent, custom_bg, custom_fg } = this.state.preferences;
-    document.documentElement.style.fontSize = `${zoom_percent}%`;
-
-    document.body.className = `db-theme-${contrast_mode}`;
-    if (contrast_mode === "custom") {
-      document.body.style.setProperty("--db-bg", custom_bg);
-      document.body.style.setProperty("--db-card-bg", custom_bg);
-      document.body.style.setProperty("--db-fg", custom_fg);
-      document.body.style.setProperty("--db-border", custom_fg);
-      document.body.style.setProperty("--db-accent", custom_fg);
-      document.body.style.setProperty("--db-accent-fg", custom_bg);
-    } else {
-      ["--db-bg", "--db-card-bg", "--db-fg", "--db-border", "--db-accent", "--db-accent-fg"]
-        .forEach(prop => document.body.style.removeProperty(prop));
+      var parsed = JSON.parse(raw);
+      var base = clone(DEFAULT_STATE);
+      var merged = Object.assign({}, base, parsed || {});
+      merged.data = Object.assign({}, base.data, (parsed && parsed.data) || {});
+      merged.data.preferences = Object.assign(
+        {},
+        base.data.preferences,
+        (parsed && parsed.data && parsed.data.preferences) || {}
+      );
+      merged.data.identity = Object.assign(
+        {},
+        base.data.identity,
+        (parsed && parsed.data && parsed.data.identity) || {}
+      );
+      if (VALID_SUBSTEPS.indexOf(merged.substep) === -1) {
+        merged.substep = merged.accessToken ? "career_dashboard" : "accessibility_ask";
+      }
+      return merged;
+    } catch (_err) {
+      return clone(DEFAULT_STATE);
     }
   }
-}
 
-window.DigitalBridgeStateManager = DigitalBridgeStateManager;
+  function save(state) {
+    try {
+      global.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (_err) {
+      // Ignore storage quota errors
+    }
+  }
+
+  function resetAll() {
+    var fresh = clone(DEFAULT_STATE);
+    save(fresh);
+    return fresh;
+  }
+
+  async function syncDraftToServer(apiBase, state) {
+    if (!apiBase || state.completed) {
+      return state.resumeToken;
+    }
+    try {
+      var safeData = clone(state.data);
+      delete safeData.password;
+      var res = await fetch(apiBase + "/onboarding/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: state.resumeToken,
+          step: typeof state.step === "number" ? state.step : 1,
+          data: safeData,
+        }),
+      });
+      if (res.ok) {
+        var json = await res.json();
+        state.resumeToken = json.token;
+        save(state);
+        return json.token;
+      }
+    } catch (_err) {
+      // LocalStorage remains source of truth offline
+    }
+    return state.resumeToken;
+  }
+
+  global.DigitalBridgeState = {
+    DEFAULT_STATE: DEFAULT_STATE,
+    load: load,
+    save: save,
+    resetAll: resetAll,
+    syncDraftToServer: syncDraftToServer,
+  };
+})(window);
