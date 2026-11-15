@@ -1,10 +1,15 @@
+import logging
 import os
+import threading
+import time
 from typing import Optional
+
 import edge_tts
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .addis_ai_service import (
     generate_addis_tts_bytes,
@@ -27,23 +32,130 @@ from .models import (
     TTSRequest,
     TokenResponse,
 )
-from .storage import PersistentStorage, init_db
+from .storage import (
+    DB_PATH,
+    OtpRateLimited,
+    PersistentStorage,
+    UserAlreadyExists,
+    init_db,
+)
 
 load_dotenv()
 init_db()
 
-app = FastAPI(title="Digital Bridge & AccessPath API", version="3.0.0")
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("selampath.api")
+
+ENV = os.getenv("ENV", "development").strip().lower()
+IS_PROD = ENV == "production"
+
+app = FastAPI(
+    title="SelamPath & AccessPath API",
+    version="3.1.0",
+    description="Accessible onboarding, identity verification and career gateway API.",
+    docs_url="/docs" if os.getenv("ENABLE_DOCS", "false" if IS_PROD else "true") == "true" else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if os.getenv("ENABLE_DOCS", "false" if IS_PROD else "true") == "true" else None,
+)
+
+DEFAULT_ORIGINS = "http://localhost:8080,http://127.0.0.1:8080"
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", DEFAULT_ORIGINS).split(",")
+    if origin.strip()
+]
+if IS_PROD and "*" in CORS_ORIGINS:
+    raise RuntimeError("CORS_ORIGINS must be an explicit allowlist in production; '*' is not allowed.")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Partner-Key"],
+    max_age=600,
 )
 
 HF_TOKEN = os.getenv("HUGGINGFACE_API_KEY")
 SMS_WEBHOOK_URL = os.getenv("SMS_WEBHOOK_URL")
+PARTNER_API_KEY = os.getenv("PARTNER_API_KEY")
+MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", str(8 * 1024 * 1024)))
+MAX_AUDIO_BYTES = int(os.getenv("MAX_AUDIO_BYTES", str(5 * 1024 * 1024)))
+
+
+class SlidingWindowLimiter:
+    """Small in-process limiter. Swap for Redis when running multiple workers."""
+
+    def __init__(self) -> None:
+        self._hits: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+        self._calls = 0
+
+    def allow(self, key: str, limit: int, window_seconds: int) -> tuple[bool, int]:
+        now = time.monotonic()
+        with self._lock:
+            self._calls += 1
+            if self._calls % 500 == 0:
+                self._purge(now)
+            bucket = self._hits.setdefault(key, [])
+            bucket[:] = [stamp for stamp in bucket if now - stamp < window_seconds]
+            if len(bucket) >= limit:
+                retry_after = max(1, int(window_seconds - (now - bucket[0])) + 1)
+                return False, retry_after
+            bucket.append(now)
+            return True, 0
+
+    def _purge(self, now: float) -> None:
+        stale = [key for key, bucket in self._hits.items() if not bucket or now - bucket[-1] > 3600]
+        for key in stale:
+            self._hits.pop(key, None)
+
+
+limiter = SlidingWindowLimiter()
+
+
+def client_ip(request: Request) -> str:
+    if os.getenv("TRUST_PROXY", "false").lower() == "true":
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def enforce_rate(request: Request, scope: str, limit: int, window_seconds: int, extra: str = "") -> None:
+    key = f"{scope}:{client_ip(request)}:{extra}".lower()
+    allowed, retry_after = limiter.allow(key, limit, window_seconds)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please wait a moment and try again.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_BODY_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": "Request body is too large."},
+        )
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    response.headers.setdefault("Permissions-Policy", "camera=(), geolocation=(), microphone=(self)")
+    response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error."})
+
 
 ACCESSPATH_CAREERS = [
     {
@@ -412,31 +524,53 @@ CAREER_MAP = {c["id"]: c for c in ACCESSPATH_CAREERS}
 
 def require_current_user(authorization: str = Header(None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid authorization token.")
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid authorization token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     token = authorization.split(" ", 1)[1].strip()
     user = PersistentStorage.get_user_by_session(token)
     if not user:
-        raise HTTPException(status_code=403, detail="Session expired or invalid.")
+        raise HTTPException(
+            status_code=401,
+            detail="Session expired or invalid.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return user
 
 
 @app.get("/api/v1/health")
 def health_check():
-    return {"status": "healthy", "service": "digital-bridge-accesspath-backend"}
+    try:
+        init_db()
+        db_ok = os.path.exists(DB_PATH) or os.path.isdir(os.path.dirname(DB_PATH) or ".")
+    except Exception:
+        logger.exception("Database health check failed")
+        db_ok = False
+    return {
+        "status": "healthy" if db_ok else "degraded",
+        "service": "selampath-accesspath-backend",
+        "database": "ok" if db_ok else "unavailable",
+    }
 
 
 @app.post("/api/v1/onboarding/session")
-def save_onboarding_session(req: OnboardingDraftRequest):
+def save_onboarding_session(req: OnboardingDraftRequest, request: Request):
+    enforce_rate(request, "draft", 30, 60)
     token = PersistentStorage.save_draft(req.token, req.step, req.data)
     return {
         "token": token,
         "resume_url": f"?resume={token}",
-        "sms_message": f"Digital Bridge: Resume your registration anytime with code {token}.",
+        "sms_message": f"SelamPath: Resume your registration anytime with code {token}.",
     }
 
 
 @app.get("/api/v1/onboarding/session/{token}")
-def get_onboarding_session(token: str):
+def get_onboarding_session(token: str, request: Request):
+    enforce_rate(request, "draft-read", 30, 60)
+    if len(token) < 8 or len(token) > 64:
+        raise HTTPException(status_code=404, detail="Session token not found.")
     draft = PersistentStorage.get_draft(token)
     if not draft:
         raise HTTPException(status_code=404, detail="Session token not found.")
@@ -444,7 +578,14 @@ def get_onboarding_session(token: str):
 
 
 @app.post("/api/v1/referrals/partner", status_code=201)
-def create_partner_referral(req: PartnerReferralRequest):
+def create_partner_referral(
+    req: PartnerReferralRequest,
+    request: Request,
+    x_partner_key: str = Header(None, alias="X-Partner-Key"),
+):
+    enforce_rate(request, "referral", 10, 3600)
+    if PARTNER_API_KEY and x_partner_key != PARTNER_API_KEY:
+        raise HTTPException(status_code=401, detail="Partner key is missing or invalid.")
     if not req.consent_confirmed:
         raise HTTPException(status_code=400, detail="Learner consent must be confirmed.")
     ref_id = PersistentStorage.save_partner_referral(
@@ -457,11 +598,18 @@ def create_partner_referral(req: PartnerReferralRequest):
 
 
 @app.post("/api/v1/onboarding/send-otp")
-async def send_otp(req: OTPSendRequest):
+async def send_otp(req: OTPSendRequest, request: Request):
     contact = req.contact_value.strip()
-    if not contact:
-        raise HTTPException(status_code=400, detail="Contact value is required.")
-    code = PersistentStorage.create_otp(contact)
+    enforce_rate(request, "otp-send-ip", 10, 600)
+    enforce_rate(request, "otp-send-contact", 5, 3600, extra=contact)
+    try:
+        code = PersistentStorage.create_otp(contact)
+    except OtpRateLimited as err:
+        raise HTTPException(
+            status_code=429,
+            detail="A verification code was requested recently. Please wait before requesting another.",
+            headers={"Retry-After": str(err.retry_after)},
+        )
 
     if SMS_WEBHOOK_URL:
         try:
@@ -471,8 +619,8 @@ async def send_otp(req: OTPSendRequest):
                     json={"to": contact, "code": code, "language": req.language},
                 )
         except Exception as err:
-            print(f"SMS webhook dispatch failed: {err}")
-    elif os.getenv("ENV", "development") != "production":
+            logger.warning("SMS webhook dispatch failed: %s", type(err).__name__)
+    elif not IS_PROD:
         print(f"[DEV OTP DISPATCH] Contact={contact} Code={code}")
 
     return {
@@ -482,7 +630,9 @@ async def send_otp(req: OTPSendRequest):
 
 
 @app.post("/api/v1/onboarding/verify-otp")
-def verify_otp(req: OTPVerifyRequest):
+def verify_otp(req: OTPVerifyRequest, request: Request):
+    enforce_rate(request, "otp-verify-ip", 20, 600)
+    enforce_rate(request, "otp-verify-contact", 10, 600, extra=req.contact_value)
     verified = PersistentStorage.verify_otp(req.contact_value, req.code)
     if not verified:
         raise HTTPException(status_code=400, detail="Invalid or expired verification code.")
@@ -490,9 +640,21 @@ def verify_otp(req: OTPVerifyRequest):
 
 
 @app.post("/api/v1/onboarding/submit", response_model=TokenResponse)
-def submit_onboarding(data: OnboardingSubmission):
+def submit_onboarding(data: OnboardingSubmission, request: Request):
+    enforce_rate(request, "submit", 10, 600)
+    if not PersistentStorage.consume_contact_verification(data.identity.contact_value):
+        raise HTTPException(
+            status_code=400,
+            detail="Please verify your phone number or email with the 6-digit code before submitting.",
+        )
     user_dict = data.model_dump()
-    user_id = PersistentStorage.save_user(user_dict)
+    try:
+        user_id = PersistentStorage.save_user(user_dict)
+    except UserAlreadyExists:
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this name already exists. Please log in instead.",
+        )
     session_token = PersistentStorage.create_session(user_id)
 
     public_user = {k: v for k, v in user_dict.items() if k != "password"}
@@ -506,7 +668,9 @@ def submit_onboarding(data: OnboardingSubmission):
 
 
 @app.post("/api/v1/auth/login", response_model=TokenResponse)
-def login(data: LoginRequest):
+def login(data: LoginRequest, request: Request):
+    enforce_rate(request, "login-ip", 20, 300)
+    enforce_rate(request, "login-name", 8, 300, extra=data.full_name)
     user = PersistentStorage.authenticate_user(data.full_name, data.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials or user not found.")
@@ -517,6 +681,14 @@ def login(data: LoginRequest):
         "token_type": "bearer",
         "user": user,
     }
+
+
+@app.post("/api/v1/auth/logout")
+def logout(request: Request, authorization: str = Header(None)):
+    enforce_rate(request, "logout", 30, 60)
+    if authorization and authorization.startswith("Bearer "):
+        PersistentStorage.delete_session(authorization.split(" ", 1)[1].strip())
+    return {"success": True}
 
 
 @app.get("/api/v1/auth/me")
@@ -563,7 +735,7 @@ def get_career_dashboard(user: dict = Depends(require_current_user)):
         "total_stages": total,
         "recommended_next_stage": next_stage,
         "acquired_skills": acquired_skills,
-        "jobs": PersistentStorage.list_jobs(limit=10),
+        "jobs": PersistentStorage.list_jobs_for_needs(user.get("support_needs", []), limit=10),
     }
 
 
@@ -589,10 +761,13 @@ def update_stage_progress(
 ):
     if req.career_id not in CAREER_MAP:
         raise HTTPException(status_code=404, detail="Career path not found.")
+    roadmap = CAREER_MAP[req.career_id]["roadmap"]
+    valid_stage_ids = {stage["id"] for stage in roadmap}
+    if req.stage_id not in valid_stage_ids:
+        raise HTTPException(status_code=404, detail="Learning stage not found.")
     completed_ids = PersistentStorage.set_stage_progress(
         user["id"], req.career_id, req.stage_id, req.completed
     )
-    roadmap = CAREER_MAP[req.career_id]["roadmap"]
     total = len(roadmap)
     done_count = len([s for s in roadmap if s["id"] in completed_ids])
     return {
@@ -602,18 +777,48 @@ def update_stage_progress(
     }
 
 
+SUPPORTED_ACCOMMODATIONS = {
+    "screen_reader_compatible",
+    "flexible_hours",
+    "voice_first_tools",
+    "jaws_nvda_provided",
+    "audio_training",
+    "remote_friendly",
+    "wheelchair_accessible",
+    "extra_time",
+    "amharic_interpreter",
+}
+
+
 @app.get("/api/v1/career/jobs")
 def list_career_jobs(
+    request: Request,
     support: Optional[str] = None,
     q: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
 ):
+    enforce_rate(request, "jobs-list", 120, 60)
+    if support and support not in SUPPORTED_ACCOMMODATIONS:
+        raise HTTPException(status_code=400, detail="Unsupported accommodation filter.")
+    if q and len(q) > 100:
+        raise HTTPException(status_code=400, detail="Search query is too long.")
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
     return {"jobs": PersistentStorage.list_jobs(support, q, limit, offset)}
 
 
 @app.post("/api/v1/career/jobs", status_code=201)
-def create_career_job(req: JobPostingCreate):
+def create_career_job(
+    req: JobPostingCreate,
+    request: Request,
+    user: dict = Depends(require_current_user),
+):
+    # Posting requires an authenticated account; anonymous spam is rejected.
+    enforce_rate(request, "jobs-create", 10, 3600, extra=str(user["id"]))
+    invalid = [item for item in req.accommodations_offered if item not in SUPPORTED_ACCOMMODATIONS]
+    if invalid:
+        raise HTTPException(status_code=400, detail="One or more accommodations are not supported.")
     return PersistentStorage.create_job(
         req.title,
         req.employer_name,
@@ -626,15 +831,14 @@ def create_career_job(req: JobPostingCreate):
 @app.post("/api/v1/career/apply", status_code=201)
 def apply_career_job(
     req: JobApplicationRequest,
-    authorization: str = Header(None),
+    request: Request,
+    user: dict = Depends(require_current_user),
 ):
-    user_id = None
-    if authorization and authorization.startswith("Bearer "):
-        u = PersistentStorage.get_user_by_session(authorization.split(" ", 1)[1].strip())
-        if u:
-            user_id = u["id"]
+    enforce_rate(request, "jobs-apply", 20, 3600, extra=str(user["id"]))
+    if not PersistentStorage.job_exists(req.job_id):
+        raise HTTPException(status_code=404, detail="Job posting not found.")
     app_id = PersistentStorage.save_job_application(
-        user_id,
+        user["id"],
         req.job_id,
         req.applicant_name,
         req.applicant_contact,
@@ -646,7 +850,8 @@ def apply_career_job(
 
 
 @app.post("/api/v1/voice/tts")
-async def generate_speech(req: TTSRequest):
+async def generate_speech(req: TTSRequest, request: Request):
+    enforce_rate(request, "tts", 40, 60)
     addis_audio = generate_addis_tts_bytes(req.text, req.language)
     if addis_audio:
         audio_bytes, media_type = addis_audio
@@ -662,12 +867,12 @@ async def generate_speech(req: TTSRequest):
         if mp3_bytes:
             return Response(content=mp3_bytes, media_type="audio/mpeg")
     except Exception as err:
-        print(f"Edge TTS failed: {err}")
+        logger.warning("Edge TTS failed: %s", type(err).__name__)
 
     if not HF_TOKEN:
         raise HTTPException(
             status_code=503,
-            detail="TTS unavailable (Edge TTS failed and no API key configured).",
+            detail="Text to speech is temporarily unavailable.",
         )
 
     model_id = "facebook/mms-tts-amh" if req.language == "am" else "facebook/mms-tts-eng"
@@ -678,7 +883,8 @@ async def generate_speech(req: TTSRequest):
         response = await client.post(url, headers=headers, json={"inputs": req.text})
 
     if response.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Hugging Face TTS error: {response.text}")
+        logger.warning("Hugging Face TTS returned %s", response.status_code)
+        raise HTTPException(status_code=502, detail="Text to speech is temporarily unavailable.")
 
     return Response(
         content=response.content,
@@ -687,20 +893,41 @@ async def generate_speech(req: TTSRequest):
 
 
 @app.post("/api/v1/voice/stt")
-async def speech_to_text(file: UploadFile = File(...), language: str = Form("en")):
-    audio_bytes = await file.read()
+async def speech_to_text(
+    request: Request,
+    file: UploadFile = File(...),
+    language: str = Form("en"),
+):
+    enforce_rate(request, "stt", 20, 60)
+    if language not in {"en", "am"}:
+        raise HTTPException(status_code=400, detail="Unsupported language.")
+    allowed_types = {
+        "audio/webm",
+        "video/webm",
+        "audio/ogg",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/x-m4a",
+    }
+    if (file.content_type or "") not in allowed_types:
+        raise HTTPException(status_code=400, detail="Unsupported audio format.")
+    audio_bytes = await file.read(MAX_AUDIO_BYTES + 1)
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Audio file is too large.")
 
     try:
         addis_text = transcribe_with_addis(audio_bytes, file.filename or "voice.webm", language)
         if addis_text is not None:
             return {"success": True, "transcript": addis_text}
     except Exception as err:
-        print(f"AddisAI STT fallback triggered: {err}")
+        logger.warning("AddisAI STT fallback triggered: %s", type(err).__name__)
 
     if not HF_TOKEN:
         raise HTTPException(
             status_code=503,
-            detail="Server STT requires ADDIS_API_KEY or HUGGINGFACE_API_KEY in backend/.env.",
+            detail="Server-side speech to text is not configured.",
         )
 
     url = "https://router.huggingface.co/hf-inference/models/openai/whisper-large-v3"
@@ -713,16 +940,22 @@ async def speech_to_text(file: UploadFile = File(...), language: str = Form("en"
         response = await client.post(url, headers=headers, content=audio_bytes)
 
     if response.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Hugging Face STT error: {response.text}")
+        logger.warning("Hugging Face STT returned %s", response.status_code)
+        raise HTTPException(status_code=502, detail="Speech to text is temporarily unavailable.")
 
     result = response.json()
     return {"success": True, "transcript": (result.get("text") or "").strip()}
 
 
 @app.post("/api/v1/ai/chat")
-def addis_ai_chat(req: ChatRequest):
+def addis_ai_chat(req: ChatRequest, request: Request):
+    enforce_rate(request, "chat", 30, 60)
     try:
         result = process_addis_text(req.prompt, req.language, req.step)
         return {"success": True, "response": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Assistant request failed")
+        return {
+            "success": True,
+            "response": "I could not reach the assistant. Please use the on-screen instructions or try again.",
+        }

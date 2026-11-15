@@ -5,10 +5,34 @@ import os
 import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
-_DEFAULT_DB = "/app/data/digital_bridge.db" if os.path.isdir("/app/data") else "digital_bridge.db"
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_DEFAULT_DB = (
+    "/app/data/digital_bridge.db"
+    if os.name == "posix" and os.path.isdir("/app/data")
+    else str(_BACKEND_DIR / "digital_bridge.db")
+)
 DB_PATH = os.getenv("DB_PATH", _DEFAULT_DB)
+
+SESSION_TTL_DAYS = int(os.getenv("SESSION_TTL_DAYS", "7"))
+OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", "15"))
+OTP_COOLDOWN_SECONDS = int(os.getenv("OTP_COOLDOWN_SECONDS", "60"))
+OTP_MAX_PER_HOUR = int(os.getenv("OTP_MAX_PER_HOUR", "5"))
+VERIFICATION_TTL_MINUTES = int(os.getenv("VERIFICATION_TTL_MINUTES", "30"))
+
+
+class UserAlreadyExists(Exception):
+    """Raised when onboarding tries to register a name that is already taken."""
+
+
+class OtpRateLimited(Exception):
+    """Raised when an OTP is requested again too soon or too often."""
+
+    def __init__(self, retry_after: int):
+        super().__init__("Too many verification codes requested.")
+        self.retry_after = max(1, int(retry_after))
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -50,7 +74,15 @@ def init_db() -> None:
                 code_salt TEXT NOT NULL,
                 code_hash TEXT NOT NULL,
                 attempts INTEGER NOT NULL DEFAULT 0,
-                expires_at TEXT NOT NULL
+                expires_at TEXT NOT NULL,
+                last_sent_at TEXT,
+                send_count INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS contact_verifications (
+                contact_value TEXT PRIMARY KEY,
+                verified_at TEXT NOT NULL,
+                used_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS onboarding_drafts (
@@ -109,6 +141,23 @@ def init_db() -> None:
         if "selected_career_id" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN selected_career_id TEXT DEFAULT NULL;")
 
+        otp_cols = [r["name"] for r in conn.execute("PRAGMA table_info(otp_codes)").fetchall()]
+        if "last_sent_at" not in otp_cols:
+            conn.execute("ALTER TABLE otp_codes ADD COLUMN last_sent_at TEXT;")
+        if "send_count" not in otp_cols:
+            conn.execute("ALTER TABLE otp_codes ADD COLUMN send_count INTEGER NOT NULL DEFAULT 0;")
+
+        # Names are matched case-insensitively at login, so enforce that uniqueness too.
+        try:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_full_name_nocase "
+                "ON users(lower(full_name));"
+            )
+        except sqlite3.IntegrityError:
+            # An older database already contains case-variant duplicates; keep serving
+            # and let operators de-duplicate before the index can be created.
+            pass
+
         count = conn.execute("SELECT COUNT(*) AS c FROM career_jobs").fetchone()["c"]
         if count == 0:
             now = datetime.now(timezone.utc).isoformat()
@@ -116,7 +165,7 @@ def init_db() -> None:
                 (
                     "job-sd-01",
                     "Junior Accessible Web Developer",
-                    "ALX Tech Partners Ethiopia",
+                    "SelamPath Employer Network",
                     "Addis Ababa / Remote",
                     "Build semantic HTML, CSS, and accessible web components. Full NVDA & JAWS support.",
                     json.dumps(["screen_reader_compatible", "flexible_hours", "jaws_nvda_provided"]),
@@ -170,36 +219,35 @@ class PersistentStorage:
         salt, pw_hash = _hash_password(user_dict["password"])
         now = datetime.now(timezone.utc).isoformat()
         with _get_conn() as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO users (
-                    full_name, password_salt, password_hash,
-                    preferred_language, preferences_json, identity_json, support_needs_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(full_name) DO UPDATE SET
-                    password_salt = excluded.password_salt,
-                    password_hash = excluded.password_hash,
-                    preferred_language = excluded.preferred_language,
-                    preferences_json = excluded.preferences_json,
-                    identity_json = excluded.identity_json,
-                    support_needs_json = excluded.support_needs_json
-                """,
-                (
-                    user_dict["full_name"].strip(),
-                    salt,
-                    pw_hash,
-                    user_dict["preferred_language"],
-                    json.dumps(user_dict["preferences"]),
-                    json.dumps(user_dict["identity"]),
-                    json.dumps(user_dict.get("support_needs", [])),
-                    now,
-                ),
-            )
-            row = conn.execute(
-                "SELECT id FROM users WHERE full_name = ?",
+            existing = conn.execute(
+                "SELECT 1 FROM users WHERE lower(full_name) = lower(?)",
                 (user_dict["full_name"].strip(),),
             ).fetchone()
-            return int(row["id"]) if row else cur.lastrowid
+            if existing:
+                raise UserAlreadyExists("An account with this name already exists.")
+            try:
+                cur = conn.execute(
+                    """
+                    INSERT INTO users (
+                        full_name, password_salt, password_hash,
+                        preferred_language, preferences_json, identity_json, support_needs_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_dict["full_name"].strip(),
+                        salt,
+                        pw_hash,
+                        user_dict["preferred_language"],
+                        json.dumps(user_dict["preferences"]),
+                        json.dumps(user_dict["identity"]),
+                        json.dumps(user_dict.get("support_needs", [])),
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError as err:
+                # Never overwrite an existing account from public onboarding input.
+                raise UserAlreadyExists("An account with this name already exists.") from err
+            return int(cur.lastrowid)
 
     @staticmethod
     def authenticate_user(full_name: str, plain_password: str) -> Optional[dict]:
@@ -209,9 +257,11 @@ class PersistentStorage:
                 "SELECT * FROM users WHERE lower(full_name) = lower(?)",
                 (full_name.strip(),),
             ).fetchone()
+            # Always run one scrypt derivation so a missing account cannot be detected by timing.
+            salt = row["password_salt"] if row else "00" * 16
+            _, computed = _hash_password(plain_password, salt)
             if not row:
                 return None
-            _, computed = _hash_password(plain_password, row["password_salt"])
             if not hmac.compare_digest(computed, row["password_hash"]):
                 return None
             return PersistentStorage._row_to_user(row)
@@ -279,15 +329,32 @@ class PersistentStorage:
     def create_session(user_id: int) -> str:
         init_db()
         token = secrets.token_urlsafe(32)
-        now = datetime.now(timezone.utc).isoformat()
-        expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+        now = datetime.now(timezone.utc)
+        expires = (now + timedelta(days=SESSION_TTL_DAYS)).isoformat()
         with _get_conn() as conn:
-            conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+            conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now.isoformat(),))
             conn.execute(
                 "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
                 (token, user_id, expires),
             )
+            # Keep only the 10 newest sessions per account so tokens do not pile up forever.
+            conn.execute(
+                """
+                DELETE FROM sessions
+                WHERE user_id = ? AND token NOT IN (
+                    SELECT token FROM sessions WHERE user_id = ? ORDER BY expires_at DESC LIMIT 10
+                )
+                """,
+                (user_id, user_id),
+            )
         return token
+
+    @staticmethod
+    def delete_session(token: str) -> bool:
+        init_db()
+        with _get_conn() as conn:
+            cur = conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            return cur.rowcount > 0
 
     @staticmethod
     def get_user_by_session(token: str) -> Optional[dict]:
@@ -312,21 +379,41 @@ class PersistentStorage:
     @staticmethod
     def create_otp(contact_value: str) -> str:
         init_db()
+        key = contact_value.strip()
         code = f"{secrets.randbelow(900000) + 100000}"
         salt, code_hash = _hash_otp(code)
-        expires = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        now = datetime.now(timezone.utc)
+        expires = (now + timedelta(minutes=OTP_TTL_MINUTES)).isoformat()
         with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT last_sent_at, send_count FROM otp_codes WHERE contact_value = ?",
+                (key,),
+            ).fetchone()
+            send_count = 0
+            if row and row["last_sent_at"]:
+                last_sent = datetime.fromisoformat(row["last_sent_at"])
+                elapsed = (now - last_sent).total_seconds()
+                if elapsed < OTP_COOLDOWN_SECONDS:
+                    raise OtpRateLimited(OTP_COOLDOWN_SECONDS - int(elapsed))
+                if elapsed < 3600:
+                    send_count = int(row["send_count"] or 0)
+                if send_count >= OTP_MAX_PER_HOUR:
+                    raise OtpRateLimited(3600 - int(elapsed))
             conn.execute(
                 """
-                INSERT INTO otp_codes (contact_value, code_salt, code_hash, attempts, expires_at)
-                VALUES (?, ?, ?, 0, ?)
+                INSERT INTO otp_codes (
+                    contact_value, code_salt, code_hash, attempts, expires_at, last_sent_at, send_count
+                )
+                VALUES (?, ?, ?, 0, ?, ?, ?)
                 ON CONFLICT(contact_value) DO UPDATE SET
                     code_salt = excluded.code_salt,
                     code_hash = excluded.code_hash,
                     attempts = 0,
-                    expires_at = excluded.expires_at
+                    expires_at = excluded.expires_at,
+                    last_sent_at = excluded.last_sent_at,
+                    send_count = excluded.send_count
                 """,
-                (contact_value.strip(), salt, code_hash, expires),
+                (key, salt, code_hash, expires, now.isoformat(), send_count + 1),
             )
         return code
 
@@ -334,6 +421,7 @@ class PersistentStorage:
     def verify_otp(contact_value: str, code: str) -> bool:
         init_db()
         key = contact_value.strip()
+        now = datetime.now(timezone.utc)
         with _get_conn() as conn:
             row = conn.execute(
                 "SELECT code_salt, code_hash, attempts, expires_at FROM otp_codes WHERE contact_value = ?",
@@ -341,15 +429,48 @@ class PersistentStorage:
             ).fetchone()
             if not row:
                 return False
-            if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc) or row["attempts"] >= 5:
+            if datetime.fromisoformat(row["expires_at"]) < now or row["attempts"] >= 5:
                 conn.execute("DELETE FROM otp_codes WHERE contact_value = ?", (key,))
                 return False
             _, computed = _hash_otp(code.strip(), row["code_salt"])
             if hmac.compare_digest(computed, row["code_hash"]):
                 conn.execute("DELETE FROM otp_codes WHERE contact_value = ?", (key,))
+                conn.execute(
+                    """
+                    INSERT INTO contact_verifications (contact_value, verified_at, used_at)
+                    VALUES (?, ?, NULL)
+                    ON CONFLICT(contact_value) DO UPDATE SET
+                        verified_at = excluded.verified_at,
+                        used_at = NULL
+                    """,
+                    (key, now.isoformat()),
+                )
                 return True
             conn.execute("UPDATE otp_codes SET attempts = attempts + 1 WHERE contact_value = ?", (key,))
             return False
+
+    @staticmethod
+    def consume_contact_verification(contact_value: str) -> bool:
+        """Single-use gate so registration cannot skip the OTP step."""
+        init_db()
+        key = contact_value.strip()
+        now = datetime.now(timezone.utc)
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT verified_at, used_at FROM contact_verifications WHERE contact_value = ?",
+                (key,),
+            ).fetchone()
+            if not row or row["used_at"]:
+                return False
+            verified_at = datetime.fromisoformat(row["verified_at"])
+            if verified_at < now - timedelta(minutes=VERIFICATION_TTL_MINUTES):
+                conn.execute("DELETE FROM contact_verifications WHERE contact_value = ?", (key,))
+                return False
+            conn.execute(
+                "UPDATE contact_verifications SET used_at = ? WHERE contact_value = ?",
+                (now.isoformat(), key),
+            )
+            return True
 
     @staticmethod
     def save_draft(token: Optional[str], step: int, data: dict) -> str:
@@ -408,6 +529,11 @@ class PersistentStorage:
             return int(cur.lastrowid)
 
     @staticmethod
+    def _like_pattern(value: str) -> str:
+        escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return f"%{escaped.lower()}%"
+
+    @staticmethod
     def list_jobs(
         support_filter: Optional[str] = None,
         q: Optional[str] = None,
@@ -415,20 +541,32 @@ class PersistentStorage:
         offset: int = 0,
     ) -> list[dict]:
         init_db()
+        limit = max(1, min(int(limit or 50), 100))
+        offset = max(0, int(offset or 0))
+        clauses = []
+        params: list = []
+        q_low = (q or "").strip()
+        if q_low:
+            clauses.append(
+                "(lower(title) LIKE ? ESCAPE '\\' OR lower(description) LIKE ? ESCAPE '\\' "
+                "OR lower(employer_name) LIKE ? ESCAPE '\\')"
+            )
+            pattern = PersistentStorage._like_pattern(q_low)
+            params.extend([pattern, pattern, pattern])
+        support = (support_filter or "").strip()
+        if support:
+            clauses.append("accommodations_json LIKE ? ESCAPE '\\'")
+            params.append(f'%"{support.replace(chr(34), "")}"%')
+        sql = "SELECT * FROM career_jobs"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY datetime(created_at) DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
         with _get_conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM career_jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         jobs = []
-        q_low = (q or "").strip().lower()
         for r in rows:
             accoms = json.loads(r["accommodations_json"])
-            if support_filter and support_filter not in accoms:
-                continue
-            searchable = (r["title"] + " " + r["description"] + " " + r["employer_name"]).lower()
-            if q_low and q_low not in searchable:
-                continue
             jobs.append(
                 {
                     "@context": "https://schema.org",
@@ -446,6 +584,30 @@ class PersistentStorage:
                 }
             )
         return jobs
+
+    @staticmethod
+    def list_jobs_for_needs(support_needs: list[str], limit: int = 10) -> list[dict]:
+        """Jobs matching any of the learner's private support needs, newest first."""
+        needs = [str(n).strip() for n in (support_needs or []) if str(n).strip()]
+        if not needs:
+            return PersistentStorage.list_jobs(limit=limit)
+        matches: list[dict] = []
+        seen: set[str] = set()
+        for need in needs[:5]:
+            for job in PersistentStorage.list_jobs(support_filter=need, limit=50):
+                if job["id"] not in seen:
+                    seen.add(job["id"])
+                    matches.append(job)
+                if len(matches) >= limit:
+                    return matches
+        return matches or PersistentStorage.list_jobs(limit=limit)
+
+    @staticmethod
+    def job_exists(job_id: str) -> bool:
+        init_db()
+        with _get_conn() as conn:
+            row = conn.execute("SELECT 1 FROM career_jobs WHERE id = ?", (job_id,)).fetchone()
+            return row is not None
 
     @staticmethod
     def create_job(

@@ -37,7 +37,6 @@
     selectedCareerPreview: null,
     data: {
       full_name: "",
-      password: "",
       preferred_language: "en",
       preferences: {
         profile_type: "standard",
@@ -87,15 +86,31 @@
       if (VALID_SUBSTEPS.indexOf(merged.substep) === -1) {
         merged.substep = merged.accessToken ? "career_dashboard" : "accessibility_ask";
       }
+      // Older builds stored the passcode in localStorage. Drop it on sight.
+      if (merged.data && Object.prototype.hasOwnProperty.call(merged.data, "password")) {
+        delete merged.data.password;
+        try {
+          global.localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        } catch (_err) {
+          // Ignore storage errors; the in-memory state is already clean.
+        }
+      }
       return merged;
     } catch (_err) {
       return clone(DEFAULT_STATE);
     }
   }
 
+  function sanitize(state) {
+    if (state && state.data && Object.prototype.hasOwnProperty.call(state.data, "password")) {
+      delete state.data.password;
+    }
+    return state;
+  }
+
   function save(state) {
     try {
-      global.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      global.localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitize(state)));
     } catch (_err) {
       // Ignore storage quota errors
     }

@@ -1,8 +1,10 @@
 (function (global) {
   var STRINGS = {
     en: {
+      brandName: "SelamPath",
+      brandTagline: "A peaceful path from learning to work.",
       welcomeEntry:
-        "Welcome to ALX Digital Bridge and AccessPath. Would you like to activate Accessibility Voice Reading Mode? Say Yes or press Y to turn on voice mode, or say No or press N for standard mode.",
+        "Welcome to SelamPath and AccessPath. Would you like to activate Accessibility Voice Reading Mode? Say Yes or press Y to turn on voice mode, or say No or press N for standard mode.",
       askAuthChoice:
         "Would you like to Login or Sign Up? Say Login or press 1, or say Sign Up or press 2.",
       askLanguage:
@@ -36,11 +38,11 @@
           "). Is that correct? Say Yes to confirm, or No to spell again."
         );
       },
-      askPassword: "Please say or type a passcode of at least 4 characters or digits.",
-      passwordTooShort: "Passcode must be at least 4 characters. Please try again.",
+      askPassword: "Please say or type a passcode of at least 8 characters or digits.",
+      passwordTooShort: "Passcode must be at least 8 characters. Please try again.",
       askPasswordConfirm: "Please repeat your passcode to test and confirm it matches.",
       passwordMismatch: "The passcodes did not match. Let us enter your passcode again.",
-      passwordConfirmed: "Passcode matched and saved.",
+      passwordConfirmed: "Passcode confirmed.",
       step2Title: "Sign Up — Step 2 of 2: Identity, Verification, and Submit",
       askIdRoute:
         "Choose how to verify. Say 1 for National or Kebele ID, 2 for Refugee ID, 3 for Alternative Document, or 4 for Partner Referral with no ID needed.",
@@ -98,6 +100,12 @@
       btnZoomOut: "Zoom -",
       btnZoomIn: "Zoom +",
       btnLang: "አማርኛ / EN",
+      btnCustomColors: "Custom Colours",
+      customBgLabel: "Background colour",
+      customFgLabel: "Text colour",
+      btnApplyColors: "Apply Custom Colours",
+      standardModeNote:
+        "Standard / Screen-Reader Mode. Press Space or the Voice button anytime for hands-free voice.",
       btnBack: "Back",
       btnNext: "Confirm & Continue",
       btnSubmit: "Submit Registration",
@@ -109,8 +117,10 @@
       },
     },
     am: {
+      brandName: "SelamPath",
+      brandTagline: "ከትምህርት ወደ ሥራ የሚወስድ ሰላማዊ መንገድ።",
       welcomeEntry:
-        "ወደ ALX ዲጂታል ብሪጅ እና AccessPath እንኳን በደህና መጡ። የድምፅ ንባብ ተደራሽነት ሁነታን ማብራት ይፈልጋሉ? ለማብራት 'አዎ' ይበሉ ወይም Y ይጫኑ፤ ካልፈለጉ 'አይ' ይበሉ ወይም N ይጫኑ።",
+        "ወደ SelamPath እና AccessPath እንኳን በደህና መጡ። የድምፅ ንባብ ተደራሽነት ሁነታን ማብራት ይፈልጋሉ? ለማብራት 'አዎ' ይበሉ ወይም Y ይጫኑ፤ ካልፈለጉ 'አይ' ይበሉ ወይም N ይጫኑ።",
       askAuthChoice:
         "መግባት (Login) ወይም መመዝገብ (Sign Up) ይፈልጋሉ? ለመግባት 'ግባ' ወይም 1፣ ለመመዝገብ 'ተመዝገብ' ወይም 2 ይበሉ።",
       askLanguage:
@@ -144,8 +154,8 @@
           ") ነው። ትክክል ነው? ለማረጋገጥ 'አዎ' ይበሉ፣ እንደገና ለመጻፍ 'አይ' ይበሉ።"
         );
       },
-      askPassword: "ቢያንስ 4 ቁምፊ ያለው የይለፍ ቃል ይናገሩ ወይም ይጻፉ።",
-      passwordTooShort: "የይለፍ ቃሉ ቢያንስ 4 ቁምፊ መሆን አለበት። እባክዎ እንደገና ይሞክሩ።",
+      askPassword: "ቢያንስ 8 ቁምፊ ያለው የይለፍ ቃል ይናገሩ ወይም ይጻፉ።",
+      passwordTooShort: "የይለፍ ቃሉ ቢያንስ 8 ቁምፊ መሆን አለበት። እባክዎ እንደገና ይሞክሩ።",
       askPasswordConfirm: "እባክዎ የይለፍ ቃሉን ለማረጋገጥ እና ለመሞከር እንደገና ይናገሩ ወይም ይጻፉ።",
       passwordMismatch: "የይለፍ ቃሎቹ አልተመሳሰሉም። እባክዎ እንደገና ያስገቡ።",
       passwordConfirmed: "የይለፍ ቃሉ ተረጋግጧል።",
@@ -202,6 +212,12 @@
       btnZoomOut: "አሳንስ (-)",
       btnZoomIn: "አጉላ (+)",
       btnLang: "EN / አማርኛ",
+      btnCustomColors: "ብጁ ቀለሞች",
+      customBgLabel: "የዳራ ቀለም",
+      customFgLabel: "የጽሑፍ ቀለም",
+      btnApplyColors: "ብጁ ቀለሞችን ተግብር",
+      standardModeNote:
+        "መደበኛ / የስክሪን አንባቢ ሁነታ። ያለ እጅ በድምፅ ለመስራት በፈለጉ ጊዜ Space ወይም የድምፅ ቁልፍን ይጫኑ።",
       btnBack: "ተመለስ",
       btnNext: "አረጋግጥና ቀጥል",
       btnSubmit: "ምዝገባ ላክ (Submit)",
