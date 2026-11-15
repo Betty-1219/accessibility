@@ -3,26 +3,35 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ALX Digital Bridge — Accessible Onboarding</title>
-  <link rel="stylesheet" href="./css/accessibility-themes.css?v=4" />
+  <meta name="description" content="SelamPath is an accessible onboarding and career gateway for learners in Ethiopia. AccessPath connects skills to inclusive employers." />
+  <meta name="theme-color" content="#0056b3" />
+  <title>SelamPath — Accessible Onboarding &amp; AccessPath Careers</title>
+  <link rel="stylesheet" href="./css/accessibility-themes.css?v=6" />
 </head>
 <body class="db-theme-default">
+  <a class="db-skip-link" href="#main-content">Skip to main content</a>
   <div class="page-wrapper">
-    <header class="alx-banner">
-      <div>
-        <h1 style="margin:0;">ALX Digital Bridge</h1>
-        <p style="margin:0.25rem 0 0;">Inclusive Learning &amp; Accessible Registration</p>
-      </div>
+    <header class="site-header">
+      <h1>SelamPath</h1>
+      <p>Accessible onboarding, learning, and the AccessPath career gateway.</p>
     </header>
 
-    <main id="main-content">
-      <digital-bridge-onboarding api-base="http://localhost:8000/api/v1"></digital-bridge-onboarding>
+    <main id="main-content" tabindex="-1">
+      <digital-bridge-onboarding lang="en"></digital-bridge-onboarding>
     </main>
+
+    <footer class="site-footer">
+      <p>
+        SelamPath · <strong>AccessPath</strong> career gateway · Built with and for learners
+        in Ethiopia. Need help? Ask for the Voice Assistant or press <kbd>Alt</kbd> + <kbd>A</kbd>.
+      </p>
+    </footer>
   </div>
 
-  <script src="./js/i18n.js?v=4"></script>
-  <script src="./js/state-manager.js?v=4"></script>
-  <script src="./js/voice-engine.js?v=4"></script>
-  <script src="./js/digital-bridge-onboarding.js?v=4"></script>
+  <script src="./js/config.js?v=6"></script>
+  <script src="./js/i18n.js?v=6"></script>
+  <script src="./js/state-manager.js?v=6"></script>
+  <script src="./js/voice-engine.js?v=6"></script>
+  <script src="./js/digital-bridge-onboarding.js?v=6"></script>
 </body>
 </html>

@@ -1,0 +1,2 @@
+# Runtime SQLite database lives here when running with Docker Compose.
+# This file keeps the directory in git while real data is ignored.

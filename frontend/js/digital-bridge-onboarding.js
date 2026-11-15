@@ -15,6 +15,20 @@
     return global.DigitalBridgeVoice;
   }
 
+  // Every value interpolated into innerHTML must pass through this helper.
+  var ESCAPE_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+  function esc(value) {
+    return String(value === null || value === undefined ? "" : value).replace(
+      /[&<>"']/g,
+      function (ch) {
+        return ESCAPE_MAP[ch];
+      }
+    );
+  }
+
+  var THEME_MODES = ["default", "dark_yellow", "light_yellow", "dark_white", "custom"];
+
   class DigitalBridgeOnboarding extends HTMLElement {
     constructor() {
       super();
@@ -23,7 +37,10 @@
       this.State = getStateApi();
       this.Voice = getVoiceApi();
       this.state = this.State.load();
-      this.apiBase = this.getAttribute("api-base") || "http://localhost:8000/api/v1";
+      this.apiBase =
+        this.getAttribute("api-base") ||
+        global.SELAMPATH_API_BASE ||
+        "http://localhost:8000/api/v1";
       this.voice = new this.Voice.VoiceEngine(this.apiBase, function (vs) {
         self._updateVoiceBadge(vs);
       });
@@ -37,6 +54,7 @@
 
       this.careers = [];
       this.dashboard = null;
+      this.passport = null;
       this.jobs = [];
       this.jobSearchQuery = "";
       this.jobSupportFilter = "";
@@ -54,8 +72,18 @@
         this.voice.apiBase = this.apiBase;
 
         var attrLang = this.getAttribute("lang");
-        if (attrLang && !this.state.data.preferred_language) {
-          this.state.data.preferred_language = attrLang === "am" ? "am" : "en";
+        if (
+          attrLang &&
+          !this.state.accessToken &&
+          this.state.step === 0 &&
+          (attrLang === "am" || attrLang === "en")
+        ) {
+          this.state.data.preferred_language = attrLang;
+          this.state.data.preferences.language = attrLang;
+        }
+        // A passcode is never persisted, so a reload mid-confirmation restarts that step.
+        if (this.state.substep === "confirm_password_reenter" && !this.pendingPassword) {
+          this.state.substep = "password";
         }
         this.voice.setLanguage(this.state.data.preferred_language);
         this._applyVisualPrefs();
@@ -80,7 +108,7 @@
       } catch (err) {
         this.innerHTML =
           '<div role="alert" class="db-error-banner">Load error: ' +
-          String(err && err.message ? err.message : err) +
+          esc(err && err.message ? err.message : err) +
           "</div>";
       }
     }
@@ -171,11 +199,32 @@
 
     _applyVisualPrefs() {
       var prefs = (this.state && this.state.data && this.state.data.preferences) || {};
-      document.body.className = "db-theme-" + (prefs.contrast_mode || "default");
-      document.documentElement.style.setProperty(
-        "--db-zoom",
-        String((prefs.zoom_percent || 100) / 100)
-      );
+      var mode = THEME_MODES.indexOf(prefs.contrast_mode) !== -1 ? prefs.contrast_mode : "default";
+      var kept = Array.prototype.slice.call(this.classList).filter(function (name) {
+        return name.indexOf("db-theme-") !== 0;
+      });
+      kept.push("db-theme-" + mode);
+      this.className = kept.join(" ");
+
+      var zoom = Math.max(80, Math.min(200, Number(prefs.zoom_percent) || 100)) / 100;
+      this.style.setProperty("--db-zoom", String(zoom));
+
+      if (mode === "custom") {
+        var bg = /^#[0-9a-fA-F]{6}$/.test(prefs.custom_bg || "") ? prefs.custom_bg : "#000000";
+        var fg = /^#[0-9a-fA-F]{6}$/.test(prefs.custom_fg || "") ? prefs.custom_fg : "#FFFF00";
+        this.style.setProperty("--db-bg", bg);
+        this.style.setProperty("--db-card-bg", bg);
+        this.style.setProperty("--db-fg", fg);
+        this.style.setProperty("--db-border", fg);
+        this.style.setProperty("--db-accent", fg);
+        this.style.setProperty("--db-accent-fg", bg);
+      } else {
+        ["--db-bg", "--db-card-bg", "--db-fg", "--db-border", "--db-accent", "--db-accent-fg"].forEach(
+          function (name) {
+            this.style.removeProperty(name);
+          }.bind(this)
+        );
+      }
     }
 
     _announceLive(msg) {
@@ -539,8 +588,8 @@
 
         case "password": {
           var digits = this.Voice.parseDigits(text);
-          var passCandidate = digits.length >= 4 ? digits : text.replace(/\s+/g, "");
-          if (passCandidate.length < 4) {
+          var passCandidate = digits.length >= 8 ? digits : text.replace(/\s+/g, "");
+          if (passCandidate.length < 8) {
             this.lastError = this._t("passwordTooShort");
             if (this.state.voiceReadingEnabled) {
               await this.voice.speak(this.lastError, this.lang);
@@ -554,10 +603,9 @@
 
         case "confirm_password_reenter": {
           var reDigits = this.Voice.parseDigits(text);
-          var reEntered = reDigits.length >= 4 ? reDigits : text.replace(/\s+/g, "");
+          var reEntered = reDigits.length >= 8 ? reDigits : text.replace(/\s+/g, "");
           if (reEntered === this.pendingPassword) {
-            this.state.data.password = this.pendingPassword;
-            this.pendingPassword = "";
+            // Hold the passcode in memory only; it is never written to localStorage.
             this.state.step = 2;
             this.state.substep = "id_route";
             if (this.state.voiceReadingEnabled) {
@@ -661,7 +709,10 @@
           if (this.Voice.isYes(text)) {
             this.state.data.identity.contact_value = this.pendingValue;
             this.pendingValue = "";
-            await this._sendOtp(this.state.data.identity.contact_value);
+            var otpSent = await this._sendOtp(this.state.data.identity.contact_value);
+            if (!otpSent) {
+              break;
+            }
             this.state.substep = "otp";
           } else if (this.Voice.isNo(text)) {
             this.pendingValue = "";
@@ -774,7 +825,13 @@
           body: JSON.stringify({ full_name: fullName, password: password }),
         });
         if (!res.ok) {
-          this.lastError = this._t("loginFailed");
+          var errBody = await res.json().catch(function () {
+            return {};
+          });
+          this.lastError =
+            res.status === 429 && typeof errBody.detail === "string"
+              ? errBody.detail
+              : this._t("loginFailed");
           this.state.substep = "login_name";
           this.render();
           if (this.state.voiceReadingEnabled) {
@@ -805,13 +862,25 @@
 
     async _sendOtp(contactValue) {
       try {
-        await fetch(this.apiBase + "/onboarding/send-otp", {
+        var res = await fetch(this.apiBase + "/onboarding/send-otp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ contact_value: contactValue, language: this.lang }),
         });
+        if (!res.ok) {
+          var json = await res.json().catch(function () {
+            return {};
+          });
+          this.lastError =
+            typeof json.detail === "string"
+              ? json.detail
+              : "The verification code could not be sent. Please try again in a minute.";
+          return false;
+        }
+        return true;
       } catch (_err) {
-        this.lastError = "Could not reach OTP service.";
+        this.lastError = "Could not reach the verification service. Check your connection and try again.";
+        return false;
       }
     }
 
@@ -832,6 +901,13 @@
       if (this.isSubmitting || this.state.completed) {
         return;
       }
+      if (!this.pendingPassword) {
+        this.state.substep = "password";
+        this.lastError = this._t("askPassword");
+        this.State.save(this.state);
+        this.render();
+        return;
+      }
       this.isSubmitting = true;
       this.voiceLoopActive = false;
       this.voice.stopListening();
@@ -842,16 +918,21 @@
       }
 
       try {
+        var payload = Object.assign({}, this.state.data, { password: this.pendingPassword });
         var res = await fetch(this.apiBase + "/onboarding/submit", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(this.state.data),
+          body: JSON.stringify(payload),
         });
         if (!res.ok) {
           var errJson = await res.json().catch(function () {
             return {};
           });
-          throw new Error(errJson.detail || "Submission failed");
+          var detail =
+            typeof errJson.detail === "string"
+              ? errJson.detail
+              : "Registration could not be completed. Please review your details and try again.";
+          throw new Error(detail);
         }
         var result = await res.json();
         this.state.accessToken = result.access_token;
@@ -860,6 +941,7 @@
         this.state.substep = "career_dashboard";
         this.state.careerTab = "dashboard";
         this.state.resumeToken = null;
+        this.pendingPassword = "";
         this.State.save(this.state);
         this.isSubmitting = false;
 
@@ -893,8 +975,21 @@
 
         if (this.state.accessToken) {
           var dashRes = await fetch(this.apiBase + "/career/dashboard", { headers: headers });
+          if (dashRes.status === 401 || dashRes.status === 403) {
+            this._handleSessionExpired();
+            return;
+          }
           if (dashRes.ok) {
             this.dashboard = await dashRes.json();
+          }
+
+          var passportRes = await fetch(this.apiBase + "/career/passport", { headers: headers });
+          if (passportRes.status === 401 || passportRes.status === 403) {
+            this._handleSessionExpired();
+            return;
+          }
+          if (passportRes.ok) {
+            this.passport = await passportRes.json();
           }
         }
 
@@ -903,7 +998,27 @@
         if (jobsRes.ok) {
           this.jobs = (await jobsRes.json()).jobs || [];
         }
-      } catch (_e) {}
+      } catch (_e) {
+        this.lastError = "Some information could not be loaded. Check your connection and try again.";
+      }
+    }
+
+    _handleSessionExpired() {
+      this.voiceLoopActive = false;
+      this.voice.stopAll();
+      this.state.accessToken = null;
+      this.state.completed = false;
+      this.state.step = 0;
+      this.state.substep = "auth_choice";
+      this.state.careerTab = "dashboard";
+      this.dashboard = null;
+      this.passport = null;
+      this.jobs = [];
+      this.pendingPassword = "";
+      this.lastNotice = "Your session expired. Please log in again to continue.";
+      this.State.save(this.state);
+      this.render();
+      this._announceLive(this.lastNotice);
     }
 
     _buildJobsUrl() {
@@ -929,6 +1044,10 @@
         },
         body: JSON.stringify({ career_id: careerId }),
       });
+      if (res.status === 401 || res.status === 403) {
+        this._handleSessionExpired();
+        return;
+      }
       if (res.ok) {
         await this._loadAccessPathData();
         this.state.careerTab = "roadmap";
@@ -938,6 +1057,9 @@
         if (this.state.voiceReadingEnabled) {
           await this.voice.speak(this.lastNotice, this.lang);
         }
+      } else {
+        this.lastError = "Your career path could not be updated. Please try again.";
+        this.render();
       }
     }
 
@@ -953,6 +1075,10 @@
         },
         body: JSON.stringify({ career_id: careerId, stage_id: stageId, completed: completed }),
       });
+      if (res.status === 401 || res.status === 403) {
+        this._handleSessionExpired();
+        return;
+      }
       if (res.ok) {
         await this._loadAccessPathData();
         this.lastNotice = completed ? "Stage marked complete." : "Stage marked incomplete.";
@@ -960,6 +1086,9 @@
         if (this.state.voiceReadingEnabled) {
           await this.voice.speak(this.lastNotice, this.lang);
         }
+      } else {
+        this.lastError = "The learning stage could not be updated. Please try again.";
+        this.render();
       }
     }
 
@@ -982,7 +1111,7 @@
                 ? "Next activity: " + dash.recommended_next_stage.title + ". "
                 : "")
             : "No career selected yet. ") +
-          "Say Dashboard, Careers, Roadmap, or Jobs to navigate."
+          "Say Dashboard, Careers, Roadmap, Passport, or Jobs to navigate."
         );
       }
       if (tab === "careers") {
@@ -992,6 +1121,20 @@
           })
           .join(". ");
         return "Career Discovery. Say Select followed by a career name or number. " + names;
+      }
+      if (tab === "passport") {
+        var passport = this.passport || {};
+        var passportCareer = passport.career ? passport.career.title : "no career selected";
+        return (
+          "Career Passport. " +
+          "Path: " +
+          passportCareer +
+          ". Readiness: " +
+          ((passport.readiness && passport.readiness.label) || "exploring pathways") +
+          ". Progress: " +
+          (passport.progress_percent || 0) +
+          " percent. Say Copy Passport or Print Passport."
+        );
       }
       if (tab === "roadmap") {
         if (!career) {
@@ -1019,13 +1162,40 @@
         this.render();
         return;
       }
-      if (n.indexOf("career") !== -1 || n.indexOf("discover") !== -1) {
+      if (
+        (n.indexOf("career") !== -1 || n.indexOf("discover") !== -1) &&
+        n.indexOf("passport") === -1
+      ) {
         this.state.careerTab = "careers";
         this.render();
         return;
       }
       if (n.indexOf("roadmap") !== -1 || n.indexOf("progress") !== -1) {
         this.state.careerTab = "roadmap";
+        this.render();
+        return;
+      }
+      if (n.indexOf("passport") !== -1 && (n.indexOf("copy") !== -1 || n.indexOf("share") !== -1)) {
+        if (!this.passport) {
+          return;
+        }
+        try {
+          await this._copyToClipboard(this._passportText());
+          this.lastNotice = "Career Passport summary copied. Share it only with employers you trust.";
+          this.render();
+          this._announceLive(this.lastNotice);
+        } catch (_err) {
+          this.lastError = "Copy is not available in this browser. Use Print / Save as PDF instead.";
+          this.render();
+        }
+        return;
+      }
+      if (n.indexOf("passport") !== -1 && (n.indexOf("print") !== -1 || n.indexOf("pdf") !== -1)) {
+        window.print();
+        return;
+      }
+      if (n.indexOf("passport") !== -1) {
+        this.state.careerTab = "passport";
         this.render();
         return;
       }
@@ -1085,42 +1255,74 @@
         var promptText = this._getCurrentPromptText();
 
         this.innerHTML =
-          '<section class="db-widget-root" role="region" aria-label="Digital Bridge and AccessPath">' +
+          '<section class="db-widget-root" role="region" aria-label="SelamPath and AccessPath">' +
           '<div id="db-aria-live" class="db-sr-only" aria-live="assertive" aria-atomic="true"></div>' +
+          '<header class="db-brand">' +
+          '<div>' +
+          '<p class="db-brand-name">' +
+          esc(this._t("brandName") || "SelamPath") +
+          "</p>" +
+          '<p class="db-brand-tagline">' +
+          esc(this._t("brandTagline")) +
+          "</p>" +
+          "</div>" +
+          '<span class="db-brand-partner">AccessPath</span>' +
+          "</header>" +
           '<div class="db-toolbar" role="toolbar" aria-label="Accessibility Controls">' +
           '<button type="button" class="db-btn db-btn-primary" id="db-btn-voice-toggle">' +
-          (this.voiceLoopActive ? this._t("btnVoiceToggleOn") : this._t("btnVoiceToggleOff")) +
+          esc(this.voiceLoopActive ? this._t("btnVoiceToggleOn") : this._t("btnVoiceToggleOff")) +
           "</button>" +
           '<button type="button" class="db-btn" id="db-btn-repeat">' +
-          this._t("btnRepeat") +
+          esc(this._t("btnRepeat")) +
           "</button>" +
           '<button type="button" class="db-btn" id="db-btn-lang">' +
-          this._t("btnLang") +
+          esc(this._t("btnLang")) +
           "</button>" +
           '<button type="button" class="db-btn" id="db-btn-contrast">' +
-          this._t("btnContrast") +
+          esc(this._t("btnContrast")) +
           "</button>" +
           '<button type="button" class="db-btn" id="db-btn-zoom-out">' +
-          this._t("btnZoomOut") +
+          esc(this._t("btnZoomOut")) +
           "</button>" +
           '<button type="button" class="db-btn" id="db-btn-zoom-in">' +
-          this._t("btnZoomIn") +
+          esc(this._t("btnZoomIn")) +
           " (" +
-          d.preferences.zoom_percent +
+          esc(Math.max(80, Math.min(200, Number(d.preferences.zoom_percent) || 100))) +
           "%)</button>" +
           "</div>" +
+          '<details class="db-colors-panel" id="db-colors-panel">' +
+          "<summary>" +
+          esc(this._t("btnCustomColors")) +
+          "</summary>" +
+          '<div class="db-colors-grid">' +
+          '<label for="db-custom-bg">' +
+          esc(this._t("customBgLabel")) +
+          '<input type="color" id="db-custom-bg" value="' +
+          esc(d.preferences.custom_bg || "#000000") +
+          '" /></label>' +
+          '<label for="db-custom-fg">' +
+          esc(this._t("customFgLabel")) +
+          '<input type="color" id="db-custom-fg" value="' +
+          esc(d.preferences.custom_fg || "#FFFF00") +
+          '" /></label>' +
+          '<button type="button" class="db-btn" id="db-apply-custom">' +
+          esc(this._t("btnApplyColors")) +
+          "</button>" +
+          "</div></details>" +
           '<div class="db-status-banner" id="db-voice-status" role="status" aria-live="polite">' +
-          (this.voiceLoopActive
-            ? this._t("listeningStatus")
-            : this.state.voiceReadingEnabled
-            ? this._t("pausedStatus")
-            : "Standard / Screen-Reader Mode. Press Space or Voice button anytime for hands-free voice.") +
+          esc(
+            this.voiceLoopActive
+              ? this._t("listeningStatus")
+              : this.state.voiceReadingEnabled
+              ? this._t("pausedStatus")
+              : this._t("standardModeNote")
+          ) +
           "</div>" +
           (this.lastNotice
-            ? '<div class="db-status-banner" role="status" aria-live="polite">' + this.lastNotice + "</div>"
+            ? '<div class="db-status-banner" role="status" aria-live="polite">' + esc(this.lastNotice) + "</div>"
             : "") +
           (this.lastError
-            ? '<div class="db-error-banner" role="alert" aria-live="assertive">' + this.lastError + "</div>"
+            ? '<div class="db-error-banner" role="alert" aria-live="assertive">' + esc(this.lastError) + "</div>"
             : "") +
           (s === "career_dashboard"
             ? this._renderAccessPath()
@@ -1135,7 +1337,7 @@
       } catch (err) {
         this.innerHTML =
           '<div role="alert" class="db-error-banner">Render error: ' +
-          String(err && err.message ? err.message : err) +
+          esc(err && err.message ? err.message : err) +
           "</div>";
       }
     }
@@ -1147,7 +1349,7 @@
         return (
           "<div>" +
           '<h2 id="db-step-heading" tabindex="-1">' +
-          promptText +
+          esc(promptText) +
           "</h2>" +
           (s === "accessibility_ask"
             ? '<div class="db-actions-row">' +
@@ -1175,8 +1377,8 @@
           : this._t("step1Title");
 
       var html = '<form id="db-wizard-form" novalidate>';
-      html += '<p style="margin-top:0; font-weight:700;">' + stepLabel + "</p>";
-      html += '<h2 id="db-step-heading" tabindex="-1" style="margin-top:0.25rem;">' + promptText + "</h2>";
+      html += '<p style="margin-top:0; font-weight:700;">' + esc(stepLabel) + "</p>";
+      html += '<h2 id="db-step-heading" tabindex="-1" style="margin-top:0.25rem;">' + esc(promptText) + "</h2>";
 
       if (s === "language") {
         html +=
@@ -1202,7 +1404,7 @@
         html +=
           '<div style="margin-top:1rem;">' +
           '<label for="db-text-input" class="db-sr-only">' +
-          promptText +
+          esc(promptText) +
           "</label>" +
           '<input id="db-text-input" class="db-input" type="' +
           (isPass ? "password" : "text") +
@@ -1211,7 +1413,7 @@
             ? "Type or spell letters (e.g. A B E B E done)"
             : "Type or dictate your answer") +
           '" value="' +
-          (s === "spell_name" ? this.spellBuffer : "") +
+          (s === "spell_name" ? esc(this.spellBuffer) : "") +
           '" />' +
           "</div>";
       }
@@ -1221,16 +1423,16 @@
           '<fieldset style="border:none; padding:0; margin:1rem 0;">' +
           '<legend class="db-sr-only">Verification Route</legend>' +
           '<button type="button" class="db-option-card db-route-btn" data-route="1">1. ' +
-          labels.national_kebele_id +
+          esc(labels.national_kebele_id) +
           "</button>" +
           '<button type="button" class="db-option-card db-route-btn" data-route="2">2. ' +
-          labels.refugee_id +
+          esc(labels.refugee_id) +
           "</button>" +
           '<button type="button" class="db-option-card db-route-btn" data-route="3">3. ' +
-          labels.alt_doc +
+          esc(labels.alt_doc) +
           "</button>" +
           '<button type="button" class="db-option-card db-route-btn" data-route="4">4. ' +
-          labels.partner_referral +
+          esc(labels.partner_referral) +
           "</button>" +
           "</fieldset>";
       }
@@ -1251,27 +1453,27 @@
         html +=
           '<div class="db-status-banner">' +
           '<p style="margin:0.25rem 0;"><strong>Name:</strong> ' +
-          d.full_name +
+          esc(d.full_name) +
           "</p>" +
           '<p style="margin:0.25rem 0;"><strong>ID Route:</strong> ' +
-          (labels[d.identity.route] || d.identity.route) +
+          esc(labels[d.identity.route] || d.identity.route) +
           "</p>" +
-          (docRef ? '<p style="margin:0.25rem 0;"><strong>Reference:</strong> ' + docRef + "</p>" : "") +
+          (docRef ? '<p style="margin:0.25rem 0;"><strong>Reference:</strong> ' + esc(docRef) + "</p>" : "") +
           '<p style="margin:0.25rem 0;"><strong>Contact:</strong> ' +
-          d.identity.contact_value +
+          esc(d.identity.contact_value) +
           "</p>" +
           "</div>";
       }
 
       html += '<div class="db-actions-row">';
-      html += '<button type="button" class="db-btn" id="db-btn-back">' + this._t("btnBack") + "</button>";
+      html += '<button type="button" class="db-btn" id="db-btn-back">' + esc(this._t("btnBack")) + "</button>";
       if (s === "review_submit") {
-        html += '<button type="submit" class="db-btn db-btn-primary">' + this._t("btnSubmit") + "</button>";
+        html += '<button type="submit" class="db-btn db-btn-primary">' + esc(this._t("btnSubmit")) + "</button>";
       } else if (
         ["language", "id_route"].indexOf(s) === -1 &&
         (s.indexOf("confirm_") !== 0 || s === "confirm_password_reenter")
       ) {
-        html += '<button type="submit" class="db-btn db-btn-primary">' + this._t("btnNext") + "</button>";
+        html += '<button type="submit" class="db-btn db-btn-primary">' + esc(this._t("btnNext")) + "</button>";
       }
       html += "</div></form>";
       return html;
@@ -1282,7 +1484,8 @@
       var dash = this.dashboard || {};
       var user = dash.user || this.state.data;
       var career = dash.selected_career;
-      var pct = dash.progress_percent || 0;
+      var passport = this.passport || {};
+      var pct = Math.max(0, Math.min(100, Number(dash.progress_percent) || 0));
       var completedIds = dash.completed_stage_ids || [];
 
       var nav =
@@ -1292,10 +1495,15 @@
         '" data-tab="dashboard">Dashboard</button>' +
         '<button type="button" class="db-btn ' +
         (tab === "careers" ? "db-btn-primary" : "") +
-        '" data-tab="careers">Explore Careers (6)</button>' +
+        '" data-tab="careers">Explore Careers (' +
+        esc(this.careers.length || 6) +
+        ")</button>" +
         '<button type="button" class="db-btn ' +
         (tab === "roadmap" ? "db-btn-primary" : "") +
         '" data-tab="roadmap">My Learning Roadmap</button>' +
+        '<button type="button" class="db-btn ' +
+        (tab === "passport" ? "db-btn-primary" : "") +
+        '" data-tab="passport">Career Passport</button>' +
         '<button type="button" class="db-btn ' +
         (tab === "jobs" ? "db-btn-primary" : "") +
         '" data-tab="jobs">Career Opportunities</button>' +
@@ -1309,30 +1517,30 @@
             return (
               '<article class="db-card">' +
               '<h3 style="margin-top:0;">' +
-              (i + 1) +
+              esc(i + 1) +
               ". " +
-              c.title +
+              esc(c.title) +
               (isSelected ? " (Selected)" : "") +
               "</h3>" +
               "<p>" +
-              c.description +
+              esc(c.description) +
               "</p>" +
               "<p><strong>Required Skills:</strong> " +
-              c.required_skills.join(", ") +
+              esc((c.required_skills || []).join(", ")) +
               "</p>" +
               "<p><strong>Learning Requirements:</strong> " +
-              c.learning_requirements +
+              esc(c.learning_requirements) +
               "</p>" +
               "<p><strong>Opportunities:</strong> " +
-              c.opportunities.join(", ") +
+              esc((c.opportunities || []).join(", ")) +
               "</p>" +
               "<p><strong>Roadmap Stages:</strong> " +
-              c.roadmap.length +
+              esc((c.roadmap || []).length) +
               " stages</p>" +
               '<button type="button" class="db-btn db-btn-primary db-select-career" data-career-id="' +
-              c.id +
+              esc(c.id) +
               '">' +
-              (isSelected ? "View Roadmap" : "Select " + c.title) +
+              esc(isSelected ? "View Roadmap" : "Select " + c.title) +
               "</button>" +
               "</article>"
             );
@@ -1346,6 +1554,10 @@
         );
       }
 
+      if (tab === "passport") {
+        return this._renderCareerPassport(nav);
+      }
+
       if (tab === "roadmap") {
         if (!career) {
           return (
@@ -1355,35 +1567,35 @@
             '<button type="button" class="db-btn db-btn-primary" data-tab="careers">Explore Careers Now</button>'
           );
         }
-        var stagesHtml = career.roadmap
+        var stagesHtml = (career.roadmap || [])
           .map(function (st, idx) {
             var isDone = completedIds.indexOf(st.id) !== -1;
             return (
               '<article class="db-card">' +
               '<h3 style="margin-top:0;">Stage ' +
-              (idx + 1) +
+              esc(idx + 1) +
               ": " +
-              st.title +
+              esc(st.title) +
               " — " +
               (isDone ? "Completed" : "In Progress") +
               "</h3>" +
               "<p><strong>Objectives:</strong> " +
-              st.objectives +
+              esc(st.objectives) +
               "</p>" +
               "<p><strong>Skills:</strong> " +
-              st.skills.join(", ") +
+              esc((st.skills || []).join(", ")) +
               "</p>" +
               "<p><strong>Resources:</strong> " +
-              st.resources +
+              esc(st.resources) +
               "</p>" +
               '<button type="button" class="db-btn ' +
               (isDone ? "" : "db-btn-primary") +
               ' db-toggle-stage" data-career-id="' +
-              career.id +
+              esc(career.id) +
               '" data-stage-id="' +
-              st.id +
+              esc(st.id) +
               '" data-next="' +
-              !isDone +
+              (!isDone) +
               '">' +
               (isDone ? "Mark Incomplete" : "Mark Stage Completed") +
               "</button>" +
@@ -1394,15 +1606,15 @@
         return (
           nav +
           '<h2 id="db-step-heading" tabindex="-1">Roadmap: ' +
-          career.title +
+          esc(career.title) +
           " (" +
-          pct +
+          esc(pct) +
           "% Complete)</h2>" +
           '<div class="db-progress-bar" role="progressbar" aria-valuenow="' +
-          pct +
+          esc(pct) +
           '" aria-valuemin="0" aria-valuemax="100">' +
           '<div class="db-progress-fill" style="width:' +
-          pct +
+          esc(pct) +
           '%;"></div></div>' +
           '<div style="margin-top:1rem;">' +
           stagesHtml +
@@ -1416,30 +1628,32 @@
           ? this.jobs
               .map(function (j) {
                 var isApplying = self.applyingJobId === j.id;
+                var employer =
+                  (j.hiringOrganization && j.hiringOrganization.name) || "Employer";
                 return (
                   '<article class="db-card">' +
                   '<h3 style="margin-top:0;">' +
-                  j.title +
+                  esc(j.title) +
                   " — " +
-                  j.hiringOrganization.name +
+                  esc(employer) +
                   "</h3>" +
                   "<p><strong>Location:</strong> " +
-                  j.jobLocationType +
+                  esc(j.jobLocationType) +
                   "</p>" +
                   "<p>" +
-                  j.description +
+                  esc(j.description) +
                   "</p>" +
                   "<p><strong>Accommodations Offered:</strong> " +
-                  (j.accommodations_offered || []).join(", ") +
+                  esc((j.accommodations_offered || []).join(", ")) +
                   "</p>" +
                   '<button type="button" class="db-btn db-btn-primary db-open-apply" data-job-id="' +
-                  j.id +
+                  esc(j.id) +
                   '">' +
                   (isApplying ? "Close Application Form" : "Apply (Voice or Typing)") +
                   "</button>" +
                   (isApplying
                     ? '<form class="db-apply-form" data-job-id="' +
-                      j.id +
+                      esc(j.id) +
                       '" style="margin-top:1rem;">' +
                       '<label for="db-app-pitch"><strong>Your Application Pitch (Type or Dictate):</strong></label>' +
                       '<textarea id="db-app-pitch" class="db-textarea" required placeholder="Explain why you are a good fit..."></textarea>' +
@@ -1463,7 +1677,7 @@
           '<form id="db-job-filter-form" class="db-card">' +
           '<label for="db-job-q"><strong>Search Jobs (Type or Voice):</strong></label>' +
           '<input id="db-job-q" class="db-input" type="text" value="' +
-          this.jobSearchQuery +
+          esc(this.jobSearchQuery) +
           '" placeholder="e.g., developer, support, analyst" />' +
           '<label for="db-job-support" style="display:block;margin-top:0.75rem;"><strong>Private "Support I Need" Filter:</strong></label>' +
           '<select id="db-job-support" class="db-select">' +
@@ -1514,33 +1728,35 @@
       return (
         nav +
         '<h2 id="db-step-heading" tabindex="-1">Welcome to AccessPath, ' +
-        this.state.data.full_name +
+        esc(this.state.data.full_name) +
         "</h2>" +
         '<div class="db-grid">' +
         '<section class="db-card">' +
         '<h3 style="margin-top:0;">Selected Career &amp; Progress</h3>' +
         "<p><strong>Career Path:</strong> " +
-        (career ? career.title : "Not selected yet") +
+        esc(career ? career.title : "Not selected yet") +
         "</p>" +
         "<p><strong>Progress:</strong> " +
-        pct +
+        esc(pct) +
         "% (" +
-        (dash.completed_count || 0) +
+        esc(dash.completed_count || 0) +
         " of " +
-        (dash.total_stages || 0) +
+        esc(dash.total_stages || 0) +
         " stages)</p>" +
         '<div class="db-progress-bar" role="progressbar" aria-valuenow="' +
-        pct +
+        esc(pct) +
         '" aria-valuemin="0" aria-valuemax="100">' +
         '<div class="db-progress-fill" style="width:' +
-        pct +
+        esc(pct) +
         '%;"></div></div>' +
         "<p style='margin-top:0.75rem;'><strong>Recommended Next Activity:</strong> " +
-        (dash.recommended_next_stage
-          ? dash.recommended_next_stage.title
-          : career
-          ? "All stages complete! Explore jobs."
-          : "Explore the 6 career pathways.") +
+        esc(
+          dash.recommended_next_stage
+            ? dash.recommended_next_stage.title
+            : career
+            ? "All stages complete! Explore jobs."
+            : "Explore the 6 career pathways."
+        ) +
         "</p>" +
         '<div class="db-actions-row">' +
         (career
@@ -1550,24 +1766,272 @@
         '<section class="db-card">' +
         '<h3 style="margin-top:0;">Profile &amp; Accessibility</h3>' +
         "<p><strong>Name:</strong> " +
-        (user.full_name || this.state.data.full_name) +
+        esc(user.full_name || this.state.data.full_name) +
         "</p>" +
         "<p><strong>Language:</strong> " +
         (this.lang === "am" ? "Amharic" : "English") +
         "</p>" +
         "<p><strong>Contrast:</strong> " +
-        this.state.data.preferences.contrast_mode +
+        esc(this.state.data.preferences.contrast_mode) +
         "</p>" +
         "<p><strong>Zoom:</strong> " +
-        this.state.data.preferences.zoom_percent +
+        esc(this.state.data.preferences.zoom_percent) +
         "%</p>" +
         "<p><strong>Acquired Skills:</strong> " +
-        (dash.acquired_skills && dash.acquired_skills.length
-          ? dash.acquired_skills.join(", ")
-          : "Complete stages to build skills") +
+        esc(
+          dash.acquired_skills && dash.acquired_skills.length
+            ? dash.acquired_skills.join(", ")
+            : "Complete stages to build skills"
+        ) +
         "</p>" +
+        "</section>" +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Career Passport</h3>' +
+        "<p>Turn your roadmap progress into a shareable readiness summary for employers and programs.</p>" +
+        "<p><strong>Readiness:</strong> " +
+        esc((passport.readiness && passport.readiness.label) || "Exploring pathways") +
+        "</p>" +
+        '<button type="button" class="db-btn db-btn-primary" data-tab="passport">Open Career Passport</button>' +
         "</section></div>"
       );
+    }
+
+    _renderCareerPassport(nav) {
+      var p = this.passport;
+      if (!p) {
+        return (
+          nav +
+          '<h2 id="db-step-heading" tabindex="-1">Career Passport</h2>' +
+          '<p class="db-card">Your passport is being prepared. If it does not appear, refresh the page or log in again.</p>'
+        );
+      }
+
+      var learner = p.learner || {};
+      var readiness = p.readiness || {};
+      var level = ["job_ready", "building", "exploring"].indexOf(readiness.level) !== -1
+        ? readiness.level
+        : "exploring";
+      var completed = p.completed_stages || [];
+      var remaining = p.remaining_stages || [];
+      var skills = p.acquired_skills || [];
+      var supports = p.support_needs || [];
+      var apps = p.applications || {};
+      var pct = Math.max(0, Math.min(100, Number(p.progress_percent) || 0));
+
+      var issued = "";
+      try {
+        issued = new Date(p.generated_at).toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        });
+      } catch (_err) {
+        issued = p.generated_at || "";
+      }
+      var latestApplication = "";
+      if (apps.latest_at) {
+        try {
+          latestApplication = new Date(apps.latest_at).toLocaleDateString(undefined, {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          });
+        } catch (_err) {
+          latestApplication = apps.latest_at;
+        }
+      }
+
+      var completedHtml = completed.length
+        ? '<ul class="db-passport-list">' +
+          completed
+            .map(function (stage) {
+              return "<li>" + esc(stage.title) + "</li>";
+            })
+            .join("") +
+          "</ul>"
+        : "<p>No roadmap stages completed yet.</p>";
+
+      var skillsHtml = skills.length
+        ? '<ul class="db-passport-list">' +
+          skills
+            .map(function (skill) {
+              return "<li>" + esc(skill) + "</li>";
+            })
+            .join("") +
+          "</ul>"
+        : "<p>Complete roadmap stages to build verified skills.</p>";
+
+      var supportHtml = supports.length
+        ? '<ul class="db-passport-list">' +
+          supports
+            .map(function (need) {
+              return "<li>" + esc(need) + "</li>";
+            })
+            .join("") +
+          "</ul>"
+        : "<p>No workplace support preferences recorded.</p>";
+
+      var nextTitles = remaining
+        .slice(0, 3)
+        .map(function (stage) {
+          return stage.title;
+        })
+        .join(", ");
+      var nextHtml = p.career
+        ? remaining.length
+          ? "<p><strong>Next up:</strong> " + esc(nextTitles) + "</p>"
+          : "<p><strong>Next up:</strong> All roadmap stages are complete.</p>"
+        : "<p>Choose a career path to start building your roadmap.</p>";
+
+      return (
+        nav +
+        '<article class="db-passport" id="db-career-passport">' +
+        '<header class="db-passport-header">' +
+        '<div>' +
+        '<p class="db-passport-kicker">SelamPath · AccessPath</p>' +
+        '<h2 id="db-step-heading" tabindex="-1">Career Passport</h2>' +
+        '<p class="db-passport-name">' +
+        esc(learner.name || this.state.data.full_name) +
+        "</p>" +
+        "</div>" +
+        '<span class="db-readiness-badge db-readiness-' +
+        esc(level) +
+        '">' +
+        esc(readiness.label || "Exploring pathways") +
+        "</span>" +
+        "</header>" +
+        '<p class="db-passport-meta">Passport <strong>' +
+        esc(p.passport_id) +
+        "</strong> · Issued " +
+        esc(issued) +
+        "</p>" +
+        '<div class="db-grid">' +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Career Direction</h3>' +
+        "<p><strong>Path:</strong> " +
+        esc(p.career ? p.career.title : "Not selected yet") +
+        "</p>" +
+        "<p><strong>Readiness:</strong> " +
+        esc(readiness.label || "Exploring pathways") +
+        "</p>" +
+        "<p><strong>Progress:</strong> " +
+        esc(pct) +
+        "% (" +
+        esc(p.completed_count || 0) +
+        " of " +
+        esc(p.total_stages || 0) +
+        " stages)</p>" +
+        '<div class="db-progress-bar" role="progressbar" aria-valuenow="' +
+        esc(pct) +
+        '" aria-valuemin="0" aria-valuemax="100">' +
+        '<div class="db-progress-fill" style="width:' +
+        esc(pct) +
+        '%;"></div></div>' +
+        nextHtml +
+        "</section>" +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Verified Identity</h3>' +
+        "<p><strong>Contact:</strong> " +
+        esc(
+          learner.contact_verified
+            ? learner.contact
+            : "Not verified"
+        ) +
+        "</p>" +
+        "<p><strong>Contact status:</strong> " +
+        (learner.contact_verified ? "Verified with a single-use code" : "Not verified") +
+        "</p>" +
+        "<p><strong>Preferred language:</strong> " +
+        esc(learner.language === "am" ? "Amharic" : "English") +
+        "</p>" +
+        "</section>" +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Skills &amp; Learning</h3>' +
+        "<p><strong>Completed stages:</strong></p>" +
+        completedHtml +
+        "<p><strong>Acquired skills:</strong></p>" +
+        skillsHtml +
+        "</section>" +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Workplace Support</h3>' +
+        "<p><strong>Support preferences:</strong></p>" +
+        supportHtml +
+        "</section>" +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">AccessPath Activity</h3>' +
+        "<p><strong>Applications submitted:</strong> " +
+        esc(apps.count || 0) +
+        "</p>" +
+        (latestApplication
+          ? "<p><strong>Most recent application:</strong> " + esc(latestApplication) + "</p>"
+          : "<p>No job applications yet. Explore inclusive employers from the jobs tab.</p>") +
+        "</section>" +
+        "</div>" +
+        '<p class="db-passport-note">' +
+        "This passport is generated from your AccessPath progress. It includes your contact and support preferences, so share it only with employers or programs you trust." +
+        "</p>" +
+        '<div class="db-actions-row">' +
+        '<button type="button" class="db-btn db-btn-primary" id="db-copy-passport">Copy Passport Summary</button>' +
+        '<button type="button" class="db-btn" id="db-print-passport">Print / Save as PDF</button>' +
+        "</div>" +
+        "</article>"
+      );
+    }
+
+    _passportText() {
+      var p = this.passport;
+      if (!p) {
+        return "";
+      }
+      var learner = p.learner || {};
+      var apps = p.applications || {};
+      return [
+        "SelamPath — AccessPath Career Passport",
+        "Passport ID: " + (p.passport_id || ""),
+        "Name: " + (learner.name || ""),
+        "Career path: " + (p.career ? p.career.title : "Not selected"),
+        "Readiness: " + (p.readiness ? p.readiness.label : "Exploring pathways"),
+        "Progress: " +
+          (p.progress_percent || 0) +
+          "% (" +
+          (p.completed_count || 0) +
+          " of " +
+          (p.total_stages || 0) +
+          " stages)",
+        "Skills: " + ((p.acquired_skills || []).join(", ") || "None recorded"),
+        "Support needs: " + ((p.support_needs || []).join(", ") || "None recorded"),
+        "Verified contact: " +
+          (learner.contact_verified ? learner.contact : "Not verified"),
+        "Applications submitted: " + (apps.count || 0),
+        "Issued: " + (p.generated_at || ""),
+      ].join("\n");
+    }
+
+    _copyToClipboard(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+      }
+      return new Promise(function (resolve, reject) {
+        var area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.left = "-9999px";
+        document.body.appendChild(area);
+        area.select();
+        try {
+          var ok = document.execCommand("copy");
+          document.body.removeChild(area);
+          if (ok) {
+            resolve();
+          } else {
+            reject(new Error("Copy command was rejected."));
+          }
+        } catch (err) {
+          document.body.removeChild(area);
+          reject(err);
+        }
+      });
     }
 
     _bindEvents() {
@@ -1608,6 +2072,35 @@
       on("#db-btn-zoom-in", function () {
         self._zoomBy(25);
       });
+      var applyColors = this.querySelector("#db-apply-custom");
+      if (applyColors) {
+        applyColors.addEventListener("click", function () {
+          var bgEl = self.querySelector("#db-custom-bg");
+          var fgEl = self.querySelector("#db-custom-fg");
+          self.state.data.preferences.custom_bg = bgEl ? bgEl.value : "#000000";
+          self.state.data.preferences.custom_fg = fgEl ? fgEl.value : "#FFFF00";
+          self.state.data.preferences.contrast_mode = "custom";
+          self.State.save(self.state);
+          self._applyVisualPrefs();
+          self.render();
+          self._announceLive("Custom colours applied.");
+        });
+      }
+      [
+        ["#db-custom-bg", "custom_bg"],
+        ["#db-custom-fg", "custom_fg"],
+      ].forEach(function (pair) {
+        var input = self.querySelector(pair[0]);
+        if (!input) {
+          return;
+        }
+        input.addEventListener("input", function () {
+          self.state.data.preferences[pair[1]] = input.value;
+          self.state.data.preferences.contrast_mode = "custom";
+          self.State.save(self.state);
+          self._applyVisualPrefs();
+        });
+      });
       on("#db-btn-back", function () {
         self._goBack();
       });
@@ -1633,12 +2126,50 @@
       on("#db-btn-no", function () {
         self._handleTurnInput("no");
       });
-      on("#db-btn-logout", function () {
+      on("#db-btn-logout", async function () {
         self.voiceLoopActive = false;
         self.voice.stopAll();
+        var token = self.state.accessToken;
+        self.pendingPassword = "";
         self.state = self.State.resetAll();
         self.dashboard = null;
+        self.passport = null;
+        self.jobs = [];
+        self.careers = [];
+        self.applyingJobId = null;
+        self.showEmployerForm = false;
+        self.lastError = "";
+        self.lastNotice = "You have been logged out.";
+        if (token) {
+          try {
+            await fetch(self.apiBase + "/auth/logout", {
+              method: "POST",
+              headers: { Authorization: "Bearer " + token },
+            });
+          } catch (_err) {
+            // Local session is already cleared; server expiry will catch up.
+          }
+        }
         self.render();
+      });
+
+      on("#db-copy-passport", async function () {
+        if (!self.passport) {
+          return;
+        }
+        try {
+          await self._copyToClipboard(self._passportText());
+          self.lastError = "";
+          self.lastNotice = "Career Passport summary copied. Share it only with employers you trust.";
+          self.render();
+          self._announceLive(self.lastNotice);
+        } catch (_err) {
+          self.lastError = "Copy is not available in this browser. Use Print / Save as PDF instead.";
+          self.render();
+        }
+      });
+      on("#db-print-passport", function () {
+        window.print();
       });
 
       this.querySelectorAll(".db-route-btn").forEach(function (btn) {
@@ -1704,11 +2235,16 @@
       if (empForm) {
         empForm.addEventListener("submit", async function (e) {
           e.preventDefault();
-          var title = self.querySelector("#db-emp-title").value.trim();
-          var employer = self.querySelector("#db-emp-name").value.trim();
-          var location = self.querySelector("#db-emp-loc").value.trim();
-          var desc = self.querySelector("#db-emp-desc").value.trim();
-          var accomRaw = self.querySelector("#db-emp-accom").value;
+          var titleEl = self.querySelector("#db-emp-title");
+          var nameEl = self.querySelector("#db-emp-name");
+          var locEl = self.querySelector("#db-emp-loc");
+          var descEl = self.querySelector("#db-emp-desc");
+          var accomEl = self.querySelector("#db-emp-accom");
+          var title = titleEl ? titleEl.value.trim() : "";
+          var employer = nameEl ? nameEl.value.trim() : "";
+          var location = locEl ? locEl.value.trim() : "";
+          var desc = descEl ? descEl.value.trim() : "";
+          var accomRaw = accomEl ? accomEl.value : "";
           var accoms = accomRaw
             .split(",")
             .map(function (s) {
@@ -1716,21 +2252,54 @@
             })
             .filter(Boolean);
 
-          var res = await fetch(self.apiBase + "/career/jobs", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              title: title,
-              employer_name: employer,
-              location: location,
-              description: desc,
-              accommodations_offered: accoms,
-            }),
-          });
-          if (res.ok) {
+          if (!title || !employer || !desc) {
+            self.lastError = "Job title, employer name and description are required.";
+            self.render();
+            return;
+          }
+          if (!self.state.accessToken) {
+            self.lastError = "Please log in to post a job.";
+            self.render();
+            return;
+          }
+
+          try {
+            var res = await fetch(self.apiBase + "/career/jobs", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: "Bearer " + self.state.accessToken,
+              },
+              body: JSON.stringify({
+                title: title,
+                employer_name: employer,
+                location: location,
+                description: desc,
+                accommodations_offered: accoms,
+              }),
+            });
+            if (res.status === 401 || res.status === 403) {
+              self._handleSessionExpired();
+              return;
+            }
+            if (!res.ok) {
+              var errJson = await res.json().catch(function () {
+                return {};
+              });
+              self.lastError =
+                typeof errJson.detail === "string"
+                  ? errJson.detail
+                  : "The job posting could not be published. Please check the details and try again.";
+              self.render();
+              return;
+            }
             self.showEmployerForm = false;
+            self.lastError = "";
             self.lastNotice = "Job posting published with accommodations.";
             await self._loadAccessPathData();
+            self.render();
+          } catch (_err) {
+            self.lastError = "Could not reach the server. Check your connection and try again.";
             self.render();
           }
         });
@@ -1772,31 +2341,74 @@
         form.addEventListener("submit", async function (e) {
           e.preventDefault();
           var jobId = form.getAttribute("data-job-id");
-          var pitch = self.querySelector("#db-app-pitch").value.trim();
-          var accom = self.querySelector("#db-app-accom").value.trim();
-          var headers = { "Content-Type": "application/json" };
-          if (self.state.accessToken) {
-            headers.Authorization = "Bearer " + self.state.accessToken;
+          var pitchEl = self.querySelector("#db-app-pitch");
+          var accomEl = self.querySelector("#db-app-accom");
+          var pitch = pitchEl ? pitchEl.value.trim() : "";
+          var accom = accomEl ? accomEl.value.trim() : "";
+          if (pitch.length < 3) {
+            self.lastError = "Please write or dictate a short application pitch before submitting.";
+            self.render();
+            return;
           }
-          var res = await fetch(self.apiBase + "/career/apply", {
-            method: "POST",
-            headers: headers,
-            body: JSON.stringify({
-              job_id: jobId,
-              applicant_name: self.state.data.full_name,
-              applicant_contact: self.state.data.identity.contact_value || "registered-user",
-              voice_pitch_transcript: pitch,
-              interview_accommodations: accom,
-              support_needs: self.state.data.support_needs,
-            }),
-          });
-          if (res.ok) {
+          if (!self.state.accessToken) {
+            self.lastError = "Please log in to apply for a job.";
+            self.render();
+            return;
+          }
+          var profileUser =
+            (self.dashboard && self.dashboard.user) || self.state.data || {};
+          var profileIdentity = profileUser.identity || {};
+          var contact =
+            (self.state.data.identity && self.state.data.identity.contact_value) ||
+            profileIdentity.contact_value ||
+            "";
+          if (!contact) {
+            self.lastError =
+              "Add a verified phone number or email to your profile before applying.";
+            self.render();
+            return;
+          }
+          try {
+            var res = await fetch(self.apiBase + "/career/apply", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: "Bearer " + self.state.accessToken,
+              },
+              body: JSON.stringify({
+                job_id: jobId,
+                applicant_name: self.state.data.full_name,
+                applicant_contact: contact,
+                voice_pitch_transcript: pitch,
+                interview_accommodations: accom,
+                support_needs: self.state.data.support_needs,
+              }),
+            });
+            if (res.status === 401 || res.status === 403) {
+              self._handleSessionExpired();
+              return;
+            }
+            if (!res.ok) {
+              var errJson = await res.json().catch(function () {
+                return {};
+              });
+              self.lastError =
+                typeof errJson.detail === "string"
+                  ? errJson.detail
+                  : "Your application could not be submitted. Please try again.";
+              self.render();
+              return;
+            }
             self.applyingJobId = null;
+            self.lastError = "";
             self.lastNotice = "Job application submitted successfully.";
             self.render();
             if (self.state.voiceReadingEnabled) {
               await self.voice.speak(self.lastNotice, self.lang);
             }
+          } catch (_err) {
+            self.lastError = "Could not reach the server. Check your connection and try again.";
+            self.render();
           }
         });
       });

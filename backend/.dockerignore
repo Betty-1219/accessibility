@@ -1,0 +1,14 @@
+.env
+venv
+data
+__pycache__
+**/__pycache__
+*.pyc
+**/*.pyc
+.pytest_cache
+users_db.json
+digital_bridge.db
+*.db
+*.sqlite
+*.sqlite3
+tests

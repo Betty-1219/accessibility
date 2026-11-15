@@ -1,14 +1,41 @@
 openapi: 3.0.3
 info:
-  title: Digital Bridge Accessible Onboarding API
-  version: 1.0.0
-  description: Open-standard REST API for accessible learner registration, inclusive identity verification, and workplace accommodation matching.
+  title: SelamPath & AccessPath API
+  version: 3.2.0
+  description: >
+    Accessible onboarding, server-verified contact verification, and the AccessPath
+    career gateway. Registration requires a single-use verification code sent to a
+    phone number or email. Job posting and applications require a bearer session.
 servers:
   - url: http://localhost:8000/api/v1
+    description: Local development
+security: []
 paths:
+  /health:
+    get:
+      summary: Service and database health
+      security: []
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded]
+                  service:
+                    type: string
+                  database:
+                    type: string
+                    enum: [ok, unavailable]
+
   /onboarding/session:
     post:
-      summary: Create or update an onboarding draft (Save & Resume)
+      summary: Create or update an onboarding draft
+      security: []
       requestBody:
         required: true
         content:
@@ -17,26 +44,87 @@ paths:
               $ref: '#/components/schemas/OnboardingDraft'
       responses:
         '200':
-          description: Draft saved with resume token
+          description: Draft saved
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SessionResponse'
+        '422':
+          description: Unsupported draft fields or payload too large
+        '429':
+          description: Rate limited
+
   /onboarding/session/{token}:
     get:
-      summary: Resume an onboarding session via SMS/URL token
+      summary: Resume an onboarding draft by token
+      security: []
       parameters:
         - name: token
           in: path
           required: true
           schema:
             type: string
+            minLength: 8
+            maxLength: 64
       responses:
         '200':
-          description: Saved draft retrieved
+          description: Draft retrieved
+        '404':
+          description: Token not found
+
+  /onboarding/send-otp:
+    post:
+      summary: Send a 6-digit verification code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contact_value]
+              properties:
+                contact_value:
+                  type: string
+                  description: Phone number or email address
+                language:
+                  type: string
+                  enum: [en, am]
+      responses:
+        '200':
+          description: Code dispatched
+        '429':
+          description: Cooldown or hourly cap reached
+
+  /onboarding/verify-otp:
+    post:
+      summary: Verify a contact verification code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contact_value, code]
+              properties:
+                contact_value:
+                  type: string
+                code:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+      responses:
+        '200':
+          description: Contact verified
+        '400':
+          description: Invalid or expired code
+        '429':
+          description: Too many attempts
+
   /onboarding/submit:
     post:
-      summary: Finalize accessible registration and career accommodation profile
+      summary: Register a learner after contact verification
+      security: []
       requestBody:
         required: true
         content:
@@ -44,11 +132,32 @@ paths:
             schema:
               $ref: '#/components/schemas/RegistrationPayload'
       responses:
-        '201':
-          description: Learner registered successfully
+        '200':
+          description: Learner registered and session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Contact was not verified with a current OTP
+        '409':
+          description: An account with this name already exists
+        '422':
+          description: Validation error
+        '429':
+          description: Rate limited
+
   /referrals/partner:
     post:
-      summary: Partner organization assisted registration with learner consent
+      summary: Record a partner-assisted referral with learner consent
+      security: []
+      parameters:
+        - name: X-Partner-Key
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Required only when PARTNER_API_KEY is configured
       requestBody:
         required: true
         content:
@@ -57,8 +166,371 @@ paths:
               $ref: '#/components/schemas/PartnerReferral'
       responses:
         '201':
-          description: Partner referral logged
+          description: Referral logged
+        '400':
+          description: Consent not confirmed
+        '401':
+          description: Missing or invalid partner key
+
+  /auth/login:
+    post:
+      summary: Log in with full name and passcode
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name, password]
+              properties:
+                full_name:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          description: Invalid credentials
+        '429':
+          description: Rate limited
+
+  /auth/logout:
+    post:
+      summary: Revoke the current session
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Session revoked (or already absent)
+
+  /auth/me:
+    get:
+      summary: Current learner profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user
+        '401':
+          description: Missing or expired session
+
+  /user/preferences:
+    put:
+      summary: Update accessibility preferences
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preferences]
+              properties:
+                preferences:
+                  $ref: '#/components/schemas/AccessibilityPreferences'
+      responses:
+        '200':
+          description: Preferences updated
+        '401':
+          description: Missing or expired session
+
+  /career/paths:
+    get:
+      summary: List the six AccessPath career pathways
+      security: []
+      responses:
+        '200':
+          description: Career pathways
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  careers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CareerPath'
+
+  /career/dashboard:
+    get:
+      summary: Learner dashboard, selected career, and progress
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Dashboard data
+        '401':
+          description: Missing or expired session
+
+  /career/passport:
+    get:
+      summary: Shareable career-readiness passport
+      description: >
+        Returns the authenticated learner's career direction, verified identity status,
+        completed roadmap stages, acquired skills, workplace support preferences, and
+        application activity.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Career passport data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CareerPassport'
+        '401':
+          description: Missing or expired session
+
+  /career/select:
+    post:
+      summary: Select a career path
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [career_id]
+              properties:
+                career_id:
+                  type: string
+      responses:
+        '200':
+          description: Career selected
+        '401':
+          description: Missing or expired session
+        '404':
+          description: Career not found
+
+  /career/progress:
+    post:
+      summary: Mark a learning stage complete or incomplete
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [career_id, stage_id]
+              properties:
+                career_id:
+                  type: string
+                stage_id:
+                  type: string
+                completed:
+                  type: boolean
+                  default: true
+      responses:
+        '200':
+          description: Progress updated
+        '401':
+          description: Missing or expired session
+        '404':
+          description: Career or stage not found
+
+  /career/jobs:
+    get:
+      summary: List inclusive jobs
+      security: []
+      parameters:
+        - name: support
+          in: query
+          schema:
+            type: string
+            enum:
+              - screen_reader_compatible
+              - flexible_hours
+              - voice_first_tools
+              - jaws_nvda_provided
+              - audio_training
+              - remote_friendly
+              - wheelchair_accessible
+              - extra_time
+              - amharic_interpreter
+        - name: q
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Job postings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/JobPosting'
+        '400':
+          description: Unsupported accommodation filter
+    post:
+      summary: Publish an inclusive job posting
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobPostingCreate'
+      responses:
+        '201':
+          description: Job created
+        '401':
+          description: Missing or expired session
+        '422':
+          description: Validation error
+
+  /career/apply:
+    post:
+      summary: Apply to a job with a voice or typed pitch
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobApplication'
+      responses:
+        '201':
+          description: Application stored
+        '401':
+          description: Missing or expired session
+        '404':
+          description: Job posting not found
+        '429':
+          description: Rate limited
+
+  /voice/tts:
+    post:
+      summary: Synthesize speech
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                  maxLength: 1000
+                language:
+                  type: string
+                  enum: [en, am]
+      responses:
+        '200':
+          description: Audio bytes
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        '429':
+          description: Rate limited
+        '503':
+          description: Speech service unavailable
+
+  /voice/stt:
+    post:
+      summary: Transcribe a short audio clip
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                language:
+                  type: string
+                  enum: [en, am]
+                  default: en
+      responses:
+        '200':
+          description: Transcript
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  transcript:
+                    type: string
+        '400':
+          description: Unsupported audio format or language
+        '413':
+          description: Audio file too large
+
+  /ai/chat:
+    post:
+      summary: Accessibility assistant reply
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                  maxLength: 500
+                language:
+                  type: string
+                  enum: [en, am]
+                step:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+      responses:
+        '200':
+          description: Assistant response
+        '429':
+          description: Rate limited
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque session token
+
   schemas:
     AccessibilityPreferences:
       type: object
@@ -71,46 +543,58 @@ components:
           enum: [default, dark_yellow, light_yellow, dark_white, custom]
         custom_bg:
           type: string
-          example: "#000000"
+          pattern: '^#[0-9A-Fa-f]{6}$'
+          example: '#000000'
         custom_fg:
           type: string
-          example: "#FFFF00"
+          pattern: '^#[0-9A-Fa-f]{6}$'
+          example: '#FFFF00'
         zoom_percent:
           type: integer
-          minimum: 100
+          minimum: 80
           maximum: 200
+          default: 100
         tts_enabled:
           type: boolean
         stt_enabled:
           type: boolean
         language:
           type: string
-          enum: [en, am, om, ti, so, ar]
+          enum: [en, am]
+
     IdentityVerification:
       type: object
-      required: [route]
+      required: [route, contact_value]
       properties:
         route:
           type: string
-          enum: [national_kebele_id, refugee_id, alternative_doc, partner_referral]
+          enum: [national_kebele_id, refugee_id, alt_doc, partner_referral]
         document_number:
           type: string
-        partner_org_name:
+          maxLength: 64
+        partner_name:
           type: string
-        contact_channel:
-          type: string
-          enum: [sms, telegram, email, voice_callback]
+          maxLength: 120
         contact_value:
           type: string
+          description: Verified phone number or email address
+        otp_verified:
+          type: boolean
+          description: Accepted for compatibility only; ignored by the server
+
     OnboardingDraft:
       type: object
       properties:
         token:
           type: string
+          maxLength: 64
         step:
           type: integer
+          default: 1
         data:
           type: object
+          description: Must only contain full_name, preferred_language, preferences, identity, and support_needs
+
     SessionResponse:
       type: object
       properties:
@@ -120,41 +604,246 @@ components:
           type: string
         sms_message:
           type: string
+
     RegistrationPayload:
       type: object
-      required: [full_name, identity, preferences]
+      required: [full_name, password, identity, preferences]
       properties:
         full_name:
           type: string
+          minLength: 2
+          maxLength: 120
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
         preferred_language:
           type: string
+          enum: [en, am]
         preferences:
           $ref: '#/components/schemas/AccessibilityPreferences'
         identity:
           $ref: '#/components/schemas/IdentityVerification'
         support_needs:
           type: array
+          maxItems: 20
           items:
             type: string
-          description: Private functional accommodations (no medical proof required)
-        career_gateway:
-          type: object
-          properties:
-            seeking_work:
-              type: boolean
-            preferred_accommodations:
-              type: array
-              items:
-                type: string
+          description: Private functional accommodations; no medical proof required
+
     PartnerReferral:
       type: object
       required: [partner_name, learner_name, learner_contact, consent_confirmed]
       properties:
         partner_name:
           type: string
+          maxLength: 120
         learner_name:
           type: string
+          maxLength: 120
         learner_contact:
           type: string
         consent_confirmed:
           type: boolean
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: bearer
+        user:
+          type: object
+
+    CareerPassport:
+      type: object
+      properties:
+        passport_id:
+          type: string
+          example: AP-000001
+        generated_at:
+          type: string
+          format: date-time
+        learner:
+          type: object
+          properties:
+            name:
+              type: string
+            contact:
+              type: string
+            contact_verified:
+              type: boolean
+            language:
+              type: string
+              enum: [en, am]
+        career:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+            title:
+              type: string
+        progress_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        completed_count:
+          type: integer
+        total_stages:
+          type: integer
+        completed_stages:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+        remaining_stages:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+        acquired_skills:
+          type: array
+          items:
+            type: string
+        support_needs:
+          type: array
+          items:
+            type: string
+        applications:
+          type: object
+          properties:
+            count:
+              type: integer
+            latest_at:
+              type: string
+              format: date-time
+              nullable: true
+        readiness:
+          type: object
+          properties:
+            level:
+              type: string
+              enum: [exploring, building, job_ready]
+            label:
+              type: string
+
+    CareerPath:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        required_skills:
+          type: array
+          items:
+            type: string
+        learning_requirements:
+          type: string
+        opportunities:
+          type: array
+          items:
+            type: string
+        roadmap:
+          type: array
+          items:
+            type: object
+
+    JobPostingCreate:
+      type: object
+      required: [title, employer_name, description]
+      properties:
+        title:
+          type: string
+          maxLength: 120
+        employer_name:
+          type: string
+          maxLength: 120
+        location:
+          type: string
+          maxLength: 120
+          default: Addis Ababa / Remote
+        description:
+          type: string
+          maxLength: 4000
+        accommodations_offered:
+          type: array
+          maxItems: 12
+          items:
+            type: string
+            enum:
+              - screen_reader_compatible
+              - flexible_hours
+              - voice_first_tools
+              - jaws_nvda_provided
+              - audio_training
+              - remote_friendly
+              - wheelchair_accessible
+              - extra_time
+              - amharic_interpreter
+
+    JobPosting:
+      type: object
+      properties:
+        '@context':
+          type: string
+        '@type':
+          type: string
+        id:
+          type: string
+        title:
+          type: string
+        hiringOrganization:
+          type: object
+          properties:
+            '@type':
+              type: string
+            name:
+              type: string
+        jobLocationType:
+          type: string
+        description:
+          type: string
+        accommodations_offered:
+          type: array
+          items:
+            type: string
+        datePosted:
+          type: string
+          format: date-time
+
+    JobApplication:
+      type: object
+      required: [job_id, applicant_name, applicant_contact, voice_pitch_transcript]
+      properties:
+        job_id:
+          type: string
+        applicant_name:
+          type: string
+          maxLength: 120
+        applicant_contact:
+          type: string
+        voice_pitch_transcript:
+          type: string
+          maxLength: 3000
+        interview_accommodations:
+          type: string
+          maxLength: 500
+        support_needs:
+          type: array
+          maxItems: 20
+          items:
+            type: string

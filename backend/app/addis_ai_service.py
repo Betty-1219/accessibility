@@ -21,7 +21,7 @@ def _offline_assistant_reply(prompt: str, language: str, step: int) -> str:
         if any(w in q for w in ["ስም", "name", "ፊደል", "spell", "ይለፍ", "password"]):
             return (
                 "በደረጃ 1 ሙሉ ስምዎን ይናገሩ። በትክክል ካልተሰማ 'አይ' በማለት በፊደል ይናገሩ። "
-                "ከዚያ ቢያንስ 4 ቁምፊ የይለፍ ቃል ይናገሩ እና ለማረጋገጥ ይድገሙት።"
+                "ከዚያ ቢያንስ 8 ቁምፊ የይለፍ ቃል ይናገሩ እና ለማረጋገጥ ይድገሙት።"
             )
         if any(w in q for w in ["መታወቂያ", "id", "otp", "ስልክ", "ማረጋገጫ"]):
             return (
@@ -46,7 +46,7 @@ def _offline_assistant_reply(prompt: str, language: str, step: int) -> str:
             "like 'A B E B E space B I K I L A'—then say 'Done' or 'Yes' to confirm."
         )
     if any(w in q for w in ["password", "passcode", "pin", "step 1"]):
-        return "In Step 1, enter a passcode of at least 4 characters and repeat it once to confirm it matches."
+        return "In Step 1, enter a passcode of at least 8 characters and repeat it once to confirm it matches."
     if any(w in q for w in ["id", "verify", "otp", "refugee", "partner", "step 2"]):
         return (
             "In Step 2, choose an ID route (1-4) and confirm each answer. For security, your 6-digit OTP "
@@ -118,6 +118,7 @@ def transcribe_with_addis(audio_bytes: bytes, filename: str, language: str = "am
     if not client:
         return None
     suffix = os.path.splitext(filename or "audio.webm")[1] or ".webm"
+    suffix = "." + "".join(ch for ch in suffix.lstrip(".") if ch.isalnum())[:8] if len(suffix) > 1 else ".webm"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(audio_bytes)
         tmp_path = tmp.name

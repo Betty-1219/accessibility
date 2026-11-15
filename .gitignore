@@ -1,4 +1,28 @@
-
 .env
 backend/.env
+!backend/.env.example
+
+# Local data and secrets
 backend/users_db.json
+backend/data/*
+!backend/data/.gitkeep
+backend/digital_bridge.db
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# Python
+__pycache__/
+*.py[cod]
+backend/venv/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
