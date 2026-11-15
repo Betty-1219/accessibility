@@ -330,6 +330,114 @@ body.db-theme-dark_white,
   background: var(--db-accent);
 }
 
+.db-passport {
+  border: 3px solid var(--db-border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  background: var(--db-card-bg);
+}
+
+.db-passport-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid var(--db-border);
+}
+
+.db-passport-kicker {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.db-passport-name {
+  margin: 0.15rem 0 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.db-readiness-badge {
+  padding: 0.4rem 0.8rem;
+  border: 3px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+/* Border style reinforces the readiness label without relying on colour alone. */
+.db-readiness-job_ready {
+  border-style: double;
+}
+
+.db-readiness-building {
+  border-style: dashed;
+}
+
+.db-readiness-exploring {
+  border-style: dotted;
+}
+
+.db-passport-meta {
+  margin: 0.75rem 0 0;
+  font-size: 0.95rem;
+}
+
+.db-passport-list {
+  margin: 0.35rem 0 1rem;
+  padding-left: 1.35rem;
+}
+
+.db-passport-list li {
+  margin-bottom: 0.3rem;
+}
+
+.db-passport-note {
+  margin-top: 0.5rem;
+  padding: 0.85rem 1rem;
+  border: 2px dashed var(--db-border);
+  border-radius: 8px;
+}
+
+@media print {
+  .db-toolbar,
+  .db-colors-panel,
+  .db-actions-row,
+  .db-status-banner,
+  .db-error-banner,
+  .site-header,
+  .site-footer,
+  .db-skip-link {
+    display: none !important;
+  }
+
+  body,
+  .db-passport,
+  .db-passport .db-card {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  .db-passport {
+    border: 0;
+    padding: 0;
+  }
+
+  .db-passport .db-card {
+    break-inside: avoid;
+    border-color: #000000;
+  }
+
+  .db-progress-fill {
+    background: #000000 !important;
+  }
+}
+
 .db-sr-only {
   position: absolute;
   width: 1px;

@@ -473,6 +473,20 @@ class PersistentStorage:
             return True
 
     @staticmethod
+    def has_consumed_verification(contact_value: str) -> bool:
+        """True when the contact completed a server-side OTP and was used to register."""
+        init_db()
+        key = (contact_value or "").strip()
+        if not key:
+            return False
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT used_at FROM contact_verifications WHERE contact_value = ?",
+                (key,),
+            ).fetchone()
+            return bool(row and row["used_at"])
+
+    @staticmethod
     def save_draft(token: Optional[str], step: int, data: dict) -> str:
         init_db()
         draft_token = token or secrets.token_urlsafe(8)
@@ -651,6 +665,20 @@ class PersistentStorage:
             "accommodations_offered": accommodations,
             "datePosted": now,
         }
+
+    @staticmethod
+    def get_application_summary(user_id: int) -> dict:
+        init_db()
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count, MAX(created_at) AS latest_at "
+                "FROM career_applications WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            return {
+                "count": int(row["count"] or 0) if row else 0,
+                "latest_at": row["latest_at"] if row else None,
+            }
 
     @staticmethod
     def save_job_application(

@@ -34,3 +34,6 @@
   cannot be corrupted by learner- or employer-supplied markup.
 - Remaining manual checks before release: screen-reader pass on the new brand header and colour
   panel, 400% reflow at 320px, and native-speaker review of the Amharic strings.
+- The AccessPath Career Passport uses semantic headings, a text-labelled readiness badge (border
+  style as well as colour), keyboard-reachable Copy and Print buttons, an `aria-valuenow` progress
+  bar, and a print stylesheet that removes navigation controls.

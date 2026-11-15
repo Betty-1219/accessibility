@@ -23,6 +23,10 @@ Tagline: _A peaceful path from learning to work._
   Passcodes are held in memory only and never written to `localStorage`.
 - **AccessPath Career Gateway** — Private "Support I Need" preferences, six career pathways,
   learning roadmaps, accommodation-matched jobs, and employer job posting.
+- **AccessPath Career Passport** — A shareable readiness summary that combines career direction,
+  verified contact status, completed stages, acquired skills, support preferences, and application
+  activity. It can be copied as text or printed/saved as a PDF, and distinguishes SelamPath from a
+  standalone screen reader.
 - **Plug-and-Play Architecture**
   - **Level 1** — A single web component: `<digital-bridge-onboarding>`.
   - **Level 2** — REST API with an OpenAPI 3.0 specification (`openapi.yaml`).

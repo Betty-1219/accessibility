@@ -1,7 +1,9 @@
+import hashlib
 import logging
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 import edge_tts
@@ -51,7 +53,7 @@ IS_PROD = ENV == "production"
 
 app = FastAPI(
     title="SelamPath & AccessPath API",
-    version="3.1.0",
+    version="3.2.0",
     description="Accessible onboarding, identity verification and career gateway API.",
     docs_url="/docs" if os.getenv("ENABLE_DOCS", "false" if IS_PROD else "true") == "true" else None,
     redoc_url=None,
@@ -736,6 +738,69 @@ def get_career_dashboard(user: dict = Depends(require_current_user)):
         "recommended_next_stage": next_stage,
         "acquired_skills": acquired_skills,
         "jobs": PersistentStorage.list_jobs_for_needs(user.get("support_needs", []), limit=10),
+    }
+
+
+@app.get("/api/v1/career/passport")
+def get_career_passport(user: dict = Depends(require_current_user)):
+    """A shareable career-readiness snapshot, distinct from the accessibility reader."""
+    career_id = user.get("selected_career_id")
+    career = CAREER_MAP.get(career_id) if career_id else None
+    completed_ids = PersistentStorage.get_career_progress(user["id"], career_id) if career else []
+    roadmap = career["roadmap"] if career else []
+    completed_stages = [s for s in roadmap if s["id"] in completed_ids]
+    remaining_stages = [s for s in roadmap if s["id"] not in completed_ids]
+    total = len(roadmap)
+    done_count = len(completed_stages)
+    progress_pct = round((done_count / total) * 100) if total > 0 else 0
+
+    acquired_skills = []
+    for stage in completed_stages:
+        for skill in stage.get("skills", []):
+            if skill not in acquired_skills:
+                acquired_skills.append(skill)
+
+    if total > 0 and done_count == total:
+        readiness = {"level": "job_ready", "label": "Job ready"}
+    elif done_count > 0:
+        readiness = {"level": "building", "label": "Building skills"}
+    else:
+        readiness = {"level": "exploring", "label": "Exploring pathways"}
+
+    identity = user.get("identity") or {}
+    contact = identity.get("contact_value") or ""
+    contact_verified = PersistentStorage.has_consumed_verification(contact) if contact else False
+    applications = PersistentStorage.get_application_summary(user["id"])
+    passport_id = (
+        "AP-"
+        + hashlib.sha256(f"{user['id']}:{user.get('full_name', '')}".encode("utf-8"))
+        .hexdigest()[:10]
+        .upper()
+    )
+
+    return {
+        "passport_id": passport_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "learner": {
+            "name": user.get("full_name", ""),
+            "contact": contact,
+            "contact_verified": contact_verified,
+            "language": user.get("preferred_language", "en"),
+        },
+        "career": {"id": career["id"], "title": career["title"]} if career else None,
+        "progress_percent": progress_pct,
+        "completed_count": done_count,
+        "total_stages": total,
+        "completed_stages": [
+            {"id": stage["id"], "title": stage["title"]} for stage in completed_stages
+        ],
+        "remaining_stages": [
+            {"id": stage["id"], "title": stage["title"]} for stage in remaining_stages
+        ],
+        "acquired_skills": acquired_skills,
+        "support_needs": user.get("support_needs", []),
+        "applications": applications,
+        "readiness": readiness,
     }
 
 

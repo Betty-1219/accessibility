@@ -41,7 +41,9 @@ job applications. The primary risks are:
 ### Authorization
 
 - Job creation and job applications require a valid bearer session.
-- Career selection, stage progress, preferences, and dashboard endpoints require a session.
+- Career selection, stage progress, preferences, dashboard, and passport endpoints require a session.
+- The Career Passport is scoped to the authenticated learner and includes their verified contact and
+  support preferences. The UI warns learners to share it only with trusted employers or programs.
 - When `PARTNER_API_KEY` is set, partner referrals require the `X-Partner-Key` header.
 - `/docs` and `/openapi.json` are disabled in production unless `ENABLE_DOCS=true`.
 

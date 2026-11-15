@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: SelamPath & AccessPath API
-  version: 3.1.0
+  version: 3.2.0
   description: >
     Accessible onboarding, server-verified contact verification, and the AccessPath
     career gateway. Registration requires a single-use verification code sent to a
@@ -266,6 +266,25 @@ paths:
       responses:
         '200':
           description: Dashboard data
+        '401':
+          description: Missing or expired session
+
+  /career/passport:
+    get:
+      summary: Shareable career-readiness passport
+      description: >
+        Returns the authenticated learner's career direction, verified identity status,
+        completed roadmap stages, acquired skills, workplace support preferences, and
+        application activity.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Career passport data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CareerPassport'
         '401':
           description: Missing or expired session
 
@@ -637,6 +656,87 @@ components:
           example: bearer
         user:
           type: object
+
+    CareerPassport:
+      type: object
+      properties:
+        passport_id:
+          type: string
+          example: AP-000001
+        generated_at:
+          type: string
+          format: date-time
+        learner:
+          type: object
+          properties:
+            name:
+              type: string
+            contact:
+              type: string
+            contact_verified:
+              type: boolean
+            language:
+              type: string
+              enum: [en, am]
+        career:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+            title:
+              type: string
+        progress_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        completed_count:
+          type: integer
+        total_stages:
+          type: integer
+        completed_stages:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+        remaining_stages:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+        acquired_skills:
+          type: array
+          items:
+            type: string
+        support_needs:
+          type: array
+          items:
+            type: string
+        applications:
+          type: object
+          properties:
+            count:
+              type: integer
+            latest_at:
+              type: string
+              format: date-time
+              nullable: true
+        readiness:
+          type: object
+          properties:
+            level:
+              type: string
+              enum: [exploring, building, job_ready]
+            label:
+              type: string
 
     CareerPath:
       type: object

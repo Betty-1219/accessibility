@@ -54,6 +54,7 @@
 
       this.careers = [];
       this.dashboard = null;
+      this.passport = null;
       this.jobs = [];
       this.jobSearchQuery = "";
       this.jobSupportFilter = "";
@@ -981,6 +982,15 @@
           if (dashRes.ok) {
             this.dashboard = await dashRes.json();
           }
+
+          var passportRes = await fetch(this.apiBase + "/career/passport", { headers: headers });
+          if (passportRes.status === 401 || passportRes.status === 403) {
+            this._handleSessionExpired();
+            return;
+          }
+          if (passportRes.ok) {
+            this.passport = await passportRes.json();
+          }
         }
 
         var jobUrl = this._buildJobsUrl();
@@ -1002,6 +1012,7 @@
       this.state.substep = "auth_choice";
       this.state.careerTab = "dashboard";
       this.dashboard = null;
+      this.passport = null;
       this.jobs = [];
       this.pendingPassword = "";
       this.lastNotice = "Your session expired. Please log in again to continue.";
@@ -1100,7 +1111,7 @@
                 ? "Next activity: " + dash.recommended_next_stage.title + ". "
                 : "")
             : "No career selected yet. ") +
-          "Say Dashboard, Careers, Roadmap, or Jobs to navigate."
+          "Say Dashboard, Careers, Roadmap, Passport, or Jobs to navigate."
         );
       }
       if (tab === "careers") {
@@ -1110,6 +1121,20 @@
           })
           .join(". ");
         return "Career Discovery. Say Select followed by a career name or number. " + names;
+      }
+      if (tab === "passport") {
+        var passport = this.passport || {};
+        var passportCareer = passport.career ? passport.career.title : "no career selected";
+        return (
+          "Career Passport. " +
+          "Path: " +
+          passportCareer +
+          ". Readiness: " +
+          ((passport.readiness && passport.readiness.label) || "exploring pathways") +
+          ". Progress: " +
+          (passport.progress_percent || 0) +
+          " percent. Say Copy Passport or Print Passport."
+        );
       }
       if (tab === "roadmap") {
         if (!career) {
@@ -1137,13 +1162,40 @@
         this.render();
         return;
       }
-      if (n.indexOf("career") !== -1 || n.indexOf("discover") !== -1) {
+      if (
+        (n.indexOf("career") !== -1 || n.indexOf("discover") !== -1) &&
+        n.indexOf("passport") === -1
+      ) {
         this.state.careerTab = "careers";
         this.render();
         return;
       }
       if (n.indexOf("roadmap") !== -1 || n.indexOf("progress") !== -1) {
         this.state.careerTab = "roadmap";
+        this.render();
+        return;
+      }
+      if (n.indexOf("passport") !== -1 && (n.indexOf("copy") !== -1 || n.indexOf("share") !== -1)) {
+        if (!this.passport) {
+          return;
+        }
+        try {
+          await this._copyToClipboard(this._passportText());
+          this.lastNotice = "Career Passport summary copied. Share it only with employers you trust.";
+          this.render();
+          this._announceLive(this.lastNotice);
+        } catch (_err) {
+          this.lastError = "Copy is not available in this browser. Use Print / Save as PDF instead.";
+          this.render();
+        }
+        return;
+      }
+      if (n.indexOf("passport") !== -1 && (n.indexOf("print") !== -1 || n.indexOf("pdf") !== -1)) {
+        window.print();
+        return;
+      }
+      if (n.indexOf("passport") !== -1) {
+        this.state.careerTab = "passport";
         this.render();
         return;
       }
@@ -1432,6 +1484,7 @@
       var dash = this.dashboard || {};
       var user = dash.user || this.state.data;
       var career = dash.selected_career;
+      var passport = this.passport || {};
       var pct = Math.max(0, Math.min(100, Number(dash.progress_percent) || 0));
       var completedIds = dash.completed_stage_ids || [];
 
@@ -1448,6 +1501,9 @@
         '<button type="button" class="db-btn ' +
         (tab === "roadmap" ? "db-btn-primary" : "") +
         '" data-tab="roadmap">My Learning Roadmap</button>' +
+        '<button type="button" class="db-btn ' +
+        (tab === "passport" ? "db-btn-primary" : "") +
+        '" data-tab="passport">Career Passport</button>' +
         '<button type="button" class="db-btn ' +
         (tab === "jobs" ? "db-btn-primary" : "") +
         '" data-tab="jobs">Career Opportunities</button>' +
@@ -1496,6 +1552,10 @@
           cards +
           "</div>"
         );
+      }
+
+      if (tab === "passport") {
+        return this._renderCareerPassport(nav);
       }
 
       if (tab === "roadmap") {
@@ -1724,8 +1784,254 @@
             : "Complete stages to build skills"
         ) +
         "</p>" +
+        "</section>" +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Career Passport</h3>' +
+        "<p>Turn your roadmap progress into a shareable readiness summary for employers and programs.</p>" +
+        "<p><strong>Readiness:</strong> " +
+        esc((passport.readiness && passport.readiness.label) || "Exploring pathways") +
+        "</p>" +
+        '<button type="button" class="db-btn db-btn-primary" data-tab="passport">Open Career Passport</button>' +
         "</section></div>"
       );
+    }
+
+    _renderCareerPassport(nav) {
+      var p = this.passport;
+      if (!p) {
+        return (
+          nav +
+          '<h2 id="db-step-heading" tabindex="-1">Career Passport</h2>' +
+          '<p class="db-card">Your passport is being prepared. If it does not appear, refresh the page or log in again.</p>'
+        );
+      }
+
+      var learner = p.learner || {};
+      var readiness = p.readiness || {};
+      var level = ["job_ready", "building", "exploring"].indexOf(readiness.level) !== -1
+        ? readiness.level
+        : "exploring";
+      var completed = p.completed_stages || [];
+      var remaining = p.remaining_stages || [];
+      var skills = p.acquired_skills || [];
+      var supports = p.support_needs || [];
+      var apps = p.applications || {};
+      var pct = Math.max(0, Math.min(100, Number(p.progress_percent) || 0));
+
+      var issued = "";
+      try {
+        issued = new Date(p.generated_at).toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+        });
+      } catch (_err) {
+        issued = p.generated_at || "";
+      }
+      var latestApplication = "";
+      if (apps.latest_at) {
+        try {
+          latestApplication = new Date(apps.latest_at).toLocaleDateString(undefined, {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          });
+        } catch (_err) {
+          latestApplication = apps.latest_at;
+        }
+      }
+
+      var completedHtml = completed.length
+        ? '<ul class="db-passport-list">' +
+          completed
+            .map(function (stage) {
+              return "<li>" + esc(stage.title) + "</li>";
+            })
+            .join("") +
+          "</ul>"
+        : "<p>No roadmap stages completed yet.</p>";
+
+      var skillsHtml = skills.length
+        ? '<ul class="db-passport-list">' +
+          skills
+            .map(function (skill) {
+              return "<li>" + esc(skill) + "</li>";
+            })
+            .join("") +
+          "</ul>"
+        : "<p>Complete roadmap stages to build verified skills.</p>";
+
+      var supportHtml = supports.length
+        ? '<ul class="db-passport-list">' +
+          supports
+            .map(function (need) {
+              return "<li>" + esc(need) + "</li>";
+            })
+            .join("") +
+          "</ul>"
+        : "<p>No workplace support preferences recorded.</p>";
+
+      var nextTitles = remaining
+        .slice(0, 3)
+        .map(function (stage) {
+          return stage.title;
+        })
+        .join(", ");
+      var nextHtml = p.career
+        ? remaining.length
+          ? "<p><strong>Next up:</strong> " + esc(nextTitles) + "</p>"
+          : "<p><strong>Next up:</strong> All roadmap stages are complete.</p>"
+        : "<p>Choose a career path to start building your roadmap.</p>";
+
+      return (
+        nav +
+        '<article class="db-passport" id="db-career-passport">' +
+        '<header class="db-passport-header">' +
+        '<div>' +
+        '<p class="db-passport-kicker">SelamPath · AccessPath</p>' +
+        '<h2 id="db-step-heading" tabindex="-1">Career Passport</h2>' +
+        '<p class="db-passport-name">' +
+        esc(learner.name || this.state.data.full_name) +
+        "</p>" +
+        "</div>" +
+        '<span class="db-readiness-badge db-readiness-' +
+        esc(level) +
+        '">' +
+        esc(readiness.label || "Exploring pathways") +
+        "</span>" +
+        "</header>" +
+        '<p class="db-passport-meta">Passport <strong>' +
+        esc(p.passport_id) +
+        "</strong> · Issued " +
+        esc(issued) +
+        "</p>" +
+        '<div class="db-grid">' +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Career Direction</h3>' +
+        "<p><strong>Path:</strong> " +
+        esc(p.career ? p.career.title : "Not selected yet") +
+        "</p>" +
+        "<p><strong>Readiness:</strong> " +
+        esc(readiness.label || "Exploring pathways") +
+        "</p>" +
+        "<p><strong>Progress:</strong> " +
+        esc(pct) +
+        "% (" +
+        esc(p.completed_count || 0) +
+        " of " +
+        esc(p.total_stages || 0) +
+        " stages)</p>" +
+        '<div class="db-progress-bar" role="progressbar" aria-valuenow="' +
+        esc(pct) +
+        '" aria-valuemin="0" aria-valuemax="100">' +
+        '<div class="db-progress-fill" style="width:' +
+        esc(pct) +
+        '%;"></div></div>' +
+        nextHtml +
+        "</section>" +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Verified Identity</h3>' +
+        "<p><strong>Contact:</strong> " +
+        esc(
+          learner.contact_verified
+            ? learner.contact
+            : "Not verified"
+        ) +
+        "</p>" +
+        "<p><strong>Contact status:</strong> " +
+        (learner.contact_verified ? "Verified with a single-use code" : "Not verified") +
+        "</p>" +
+        "<p><strong>Preferred language:</strong> " +
+        esc(learner.language === "am" ? "Amharic" : "English") +
+        "</p>" +
+        "</section>" +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Skills &amp; Learning</h3>' +
+        "<p><strong>Completed stages:</strong></p>" +
+        completedHtml +
+        "<p><strong>Acquired skills:</strong></p>" +
+        skillsHtml +
+        "</section>" +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">Workplace Support</h3>' +
+        "<p><strong>Support preferences:</strong></p>" +
+        supportHtml +
+        "</section>" +
+        '<section class="db-card">' +
+        '<h3 style="margin-top:0;">AccessPath Activity</h3>' +
+        "<p><strong>Applications submitted:</strong> " +
+        esc(apps.count || 0) +
+        "</p>" +
+        (latestApplication
+          ? "<p><strong>Most recent application:</strong> " + esc(latestApplication) + "</p>"
+          : "<p>No job applications yet. Explore inclusive employers from the jobs tab.</p>") +
+        "</section>" +
+        "</div>" +
+        '<p class="db-passport-note">' +
+        "This passport is generated from your AccessPath progress. It includes your contact and support preferences, so share it only with employers or programs you trust." +
+        "</p>" +
+        '<div class="db-actions-row">' +
+        '<button type="button" class="db-btn db-btn-primary" id="db-copy-passport">Copy Passport Summary</button>' +
+        '<button type="button" class="db-btn" id="db-print-passport">Print / Save as PDF</button>' +
+        "</div>" +
+        "</article>"
+      );
+    }
+
+    _passportText() {
+      var p = this.passport;
+      if (!p) {
+        return "";
+      }
+      var learner = p.learner || {};
+      var apps = p.applications || {};
+      return [
+        "SelamPath — AccessPath Career Passport",
+        "Passport ID: " + (p.passport_id || ""),
+        "Name: " + (learner.name || ""),
+        "Career path: " + (p.career ? p.career.title : "Not selected"),
+        "Readiness: " + (p.readiness ? p.readiness.label : "Exploring pathways"),
+        "Progress: " +
+          (p.progress_percent || 0) +
+          "% (" +
+          (p.completed_count || 0) +
+          " of " +
+          (p.total_stages || 0) +
+          " stages)",
+        "Skills: " + ((p.acquired_skills || []).join(", ") || "None recorded"),
+        "Support needs: " + ((p.support_needs || []).join(", ") || "None recorded"),
+        "Verified contact: " +
+          (learner.contact_verified ? learner.contact : "Not verified"),
+        "Applications submitted: " + (apps.count || 0),
+        "Issued: " + (p.generated_at || ""),
+      ].join("\n");
+    }
+
+    _copyToClipboard(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+      }
+      return new Promise(function (resolve, reject) {
+        var area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.left = "-9999px";
+        document.body.appendChild(area);
+        area.select();
+        try {
+          var ok = document.execCommand("copy");
+          document.body.removeChild(area);
+          if (ok) {
+            resolve();
+          } else {
+            reject(new Error("Copy command was rejected."));
+          }
+        } catch (err) {
+          document.body.removeChild(area);
+          reject(err);
+        }
+      });
     }
 
     _bindEvents() {
@@ -1827,6 +2133,7 @@
         self.pendingPassword = "";
         self.state = self.State.resetAll();
         self.dashboard = null;
+        self.passport = null;
         self.jobs = [];
         self.careers = [];
         self.applyingJobId = null;
@@ -1844,6 +2151,25 @@
           }
         }
         self.render();
+      });
+
+      on("#db-copy-passport", async function () {
+        if (!self.passport) {
+          return;
+        }
+        try {
+          await self._copyToClipboard(self._passportText());
+          self.lastError = "";
+          self.lastNotice = "Career Passport summary copied. Share it only with employers you trust.";
+          self.render();
+          self._announceLive(self.lastNotice);
+        } catch (_err) {
+          self.lastError = "Copy is not available in this browser. Use Print / Save as PDF instead.";
+          self.render();
+        }
+      });
+      on("#db-print-passport", function () {
+        window.print();
       });
 
       this.querySelectorAll(".db-route-btn").forEach(function (btn) {

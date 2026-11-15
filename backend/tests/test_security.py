@@ -197,6 +197,46 @@ def test_logout_revokes_session(client):
     assert client.get("/api/v1/career/dashboard", headers=headers).status_code == 401
 
 
+def test_career_passport_requires_authentication(client):
+    response = client.get("/api/v1/career/passport")
+    assert response.status_code == 401
+
+
+def test_career_passport_summarizes_progress(client):
+    contact = "passport@example.com"
+    code = PersistentStorage.create_otp(contact)
+    assert PersistentStorage.verify_otp(contact, code) is True
+    assert PersistentStorage.consume_contact_verification(contact) is True
+    user_id = PersistentStorage.save_user(
+        {
+            "full_name": "Passport Learner",
+            "password": "passport-pass-1",
+            "preferred_language": "en",
+            "preferences": {},
+            "identity": {"contact_value": contact},
+            "support_needs": ["screen_reader_compatible"],
+        }
+    )
+    token = PersistentStorage.create_session(user_id)
+    PersistentStorage.set_selected_career(user_id, "software-dev")
+    PersistentStorage.set_stage_progress(user_id, "software-dev", "sd-1", True)
+
+    response = client.get(
+        "/api/v1/career/passport",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    passport = response.json()
+    assert passport["passport_id"].startswith("AP-")
+    assert passport["learner"]["name"] == "Passport Learner"
+    assert passport["learner"]["contact_verified"] is True
+    assert passport["career"]["id"] == "software-dev"
+    assert passport["progress_percent"] > 0
+    assert passport["readiness"]["level"] == "building"
+    assert "Python Basics" in passport["acquired_skills"]
+    assert passport["applications"]["count"] == 0
+
+
 def test_unknown_draft_fields_are_rejected(client):
     response = client.post(
         "/api/v1/onboarding/session",
