@@ -1256,62 +1256,18 @@
         var isDashboard = s === "career_dashboard";
         var tab = this.state.careerTab || "dashboard";
 
-        // Lucide icons (consistent: 24 viewBox, stroke currentColor, stroke-width 2, round caps)
-        function icon(name) {
-          var paths = {
-            mic: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>',
-            languages: '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
-            zoomOut: '<circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="8" x2="14" y1="11" y2="11"/>',
-            zoomIn: '<circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/>',
-            logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>',
-            dashboard: '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
-            compass: '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>',
-            map: '<path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.2-2.1a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15"/><path d="M9 3.236v15"/>',
-            passport: '<path d="M16 10h2"/><path d="M16 14h2"/><path d="M6.17 15a3 3 0 0 1 5.66 0"/><circle cx="9" cy="11" r="2"/><rect x="2" y="5" width="20" height="14" rx="2"/>',
-            briefcase: '<path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/><rect width="20" height="14" x="2" y="6" rx="2"/>'
-          };
-          return '<svg class="db-nav-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' + paths[name] + "</svg>";
-        }
-
         var voiceLabel = this.voiceLoopActive ? "Voice: On" : "Voice guidance";
-        var zoomPct = esc(Math.max(80, Math.min(200, Number(d.preferences.zoom_percent) || 100)));
         var toolbar =
-          '<div class="db-topnav-actions" role="toolbar" aria-label="Accessibility controls">' +
-          '<button type="button" class="db-btn db-btn-voice" id="db-btn-voice-toggle" aria-pressed="' + (this.voiceLoopActive ? "true" : "false") + '" title="' + esc(voiceLabel) + '">' +
-          '<span class="db-mic-icon" aria-hidden="true">' + icon("mic") + "</span>" +
-          '<span class="db-voice-label">' + esc(voiceLabel) + "</span>" +
+          '<div class="db-toolbar" role="toolbar" aria-label="Accessibility controls">' +
+          '<button type="button" class="db-btn db-btn-voice" id="db-btn-voice-toggle" aria-pressed="' + (this.voiceLoopActive ? "true" : "false") + '">' +
+          '<span class="db-mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></span>' +
+          '<span class="db-voice-label">' + esc(voiceLabel) + '</span>' +
           "</button>" +
-          '<button type="button" class="db-btn db-icon-btn" id="db-btn-lang" title="' + esc(this._t("btnLang")) + '" aria-label="' + esc(this._t("btnLang")) + '">' + icon("languages") + "</button>" +
-          '<button type="button" class="db-btn db-icon-btn" id="db-btn-zoom-out" title="' + esc(this._t("btnZoomOut")) + " (" + zoomPct + '%)" aria-label="' + esc(this._t("btnZoomOut")) + " (" + zoomPct + '%)">' + icon("zoomOut") + "</button>" +
-          '<button type="button" class="db-btn db-icon-btn" id="db-btn-zoom-in" title="' + esc(this._t("btnZoomIn")) + " (" + zoomPct + '%)" aria-label="' + esc(this._t("btnZoomIn")) + " (" + zoomPct + '%)">' + icon("zoomIn") + "</button>" +
-          (isDashboard
-            ? '<span class="db-nav-sep" aria-hidden="true"></span>' +
-              '<button type="button" class="db-btn db-icon-btn db-logout-btn" id="db-btn-logout" title="Log out" aria-label="Log out">' + icon("logout") + "</button>"
-            : "") +
+          '<button type="button" class="db-btn" id="db-btn-lang">' + esc(this._t("btnLang")) + "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-zoom-out">' + esc(this._t("btnZoomOut")) + "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-zoom-in">' + esc(this._t("btnZoomIn")) + " (" +
+          esc(Math.max(80, Math.min(200, Number(d.preferences.zoom_percent) || 100))) + "%)</button>" +
           "</div>";
-
-        var navCenter = "";
-        if (isDashboard) {
-          function navTab(id, label, iconName, tooltip) {
-            var activeCls = tab === id ? " is-active" : "";
-            return (
-              '<button type="button" class="db-nav-tab' + activeCls + '" data-tab="' + id + '"' +
-              ' aria-current="' + (tab === id ? "page" : "false") + '"' +
-              ' title="' + esc(tooltip || label) + '">' +
-              icon(iconName) +
-              "<span>" + esc(label) + "</span>" +
-              "</button>"
-            );
-          }
-          navCenter =
-            '<nav class="db-nav-center" aria-label="AccessPath main navigation">' +
-            navTab("dashboard", "Dashboard", "dashboard", "Your career workspace") +
-            navTab("careers", "Careers", "compass", "Explore careers (" + (this.careers.length || 6) + " pathways)") +
-            navTab("roadmap", "Roadmap", "map", "My learning roadmap") +
-            navTab("passport", "Passport", "passport", "Career passport") +
-            navTab("jobs", "Jobs", "briefcase", "Career opportunities") +
-            "</nav>";
-        }
 
         var voiceMsg = this.voiceLoopActive
           ? this._t("listeningStatus")
@@ -1319,12 +1275,13 @@
         var status =
           '<div id="db-voice-status" class="db-sr-only" role="status" aria-live="polite">' + esc(voiceMsg) + "</div>" +
           '<div class="db-voice-banner" role="status" aria-live="polite">' +
-          '<span class="db-voice-banner-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg></span>' +
+          '<span class="db-voice-banner-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></span>' +
           '<p class="db-voice-banner-text">' + esc(voiceMsg) + '</p>' +
           '</div>' +
           (this.lastNotice ? '<div class="db-status-banner" role="status" aria-live="polite">' + esc(this.lastNotice) + "</div>" : "") +
           (this.lastError ? '<div class="db-error-banner" role="alert" aria-live="assertive">' + esc(this.lastError) + "</div>" : "");
 
+        var navHtml = isDashboard ? this._renderAccessPathNav(tab) : "";
         var contentHtml = isDashboard ? this._renderAccessPath() : this._renderAuthOrOnboarding(s, d, promptText);
 
         var isAuthFlow = (s === "accessibility_ask" || s === "auth_choice");
@@ -1332,7 +1289,10 @@
 
         var sidebar = "";
         if (isDashboard) {
-          sidebar = "";
+          sidebar =
+            '<aside class="db-sidebar" aria-label="AccessPath navigation">' +
+            navHtml +
+            "</aside>";
         } else {
           var stepNum = s.indexOf("login_") === 0 ? 1 : this.state.step === 2 ? 2 : 1;
           var stepLabel = s.indexOf("login_") === 0 ? "Sign in" : "Registration";
@@ -1358,7 +1318,6 @@
           '<span class="db-logo-mark" aria-hidden="true">X</span>' +
           '<div class="db-logo-text"><span class="db-logo-name">SelamPath</span><span class="db-logo-sub">Career Gateway</span></div>' +
           '</div>' +
-          navCenter +
           toolbar +
           '</header>';
 
@@ -1559,6 +1518,31 @@
       }
       html += "</div></form>";
       return html;
+    }
+
+    _renderAccessPathNav(tab) {
+      var active = tab || this.state.careerTab || "dashboard";
+      var self = this;
+      function item(id, label) {
+        return (
+          '<button type="button" class="db-btn db-nav-item ' +
+          (active === id ? "is-active db-btn-primary" : "") +
+          '" data-tab="' + id + '" aria-current="' + (active === id ? "page" : "false") + '">' +
+          esc(label) +
+          "</button>"
+        );
+      }
+      return (
+        '<nav aria-label="AccessPath Navigation" class="db-side-nav">' +
+        item("dashboard", "Dashboard") +
+        item("careers", "Explore Careers (" + (self.careers.length || 6) + ")") +
+        item("roadmap", "My Learning Roadmap") +
+        item("passport", "Career Passport") +
+        item("jobs", "Career Opportunities") +
+        '<div class="db-side-nav-spacer"></div>' +
+        '<button type="button" class="db-btn db-nav-item db-nav-logout" id="db-btn-logout">Logout</button>' +
+        "</nav>"
+      );
     }
 
     _renderAccessPath() {
