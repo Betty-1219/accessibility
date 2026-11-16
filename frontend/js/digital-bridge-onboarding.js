@@ -211,7 +211,7 @@
 
       if (mode === "custom") {
         var bg = /^#[0-9a-fA-F]{6}$/.test(prefs.custom_bg || "") ? prefs.custom_bg : "#000000";
-        var fg = /^#[0-9a-fA-F]{6}$/.test(prefs.custom_fg || "") ? prefs.custom_fg : "#FFFF00";
+        var fg = /^#[0-9a-fA-F]{6}$/.test(prefs.custom_fg || "") ? prefs.custom_fg : "#FFFFFF";
         this.style.setProperty("--db-bg", bg);
         this.style.setProperty("--db-card-bg", bg);
         this.style.setProperty("--db-fg", fg);
@@ -1253,80 +1253,127 @@
         var s = this.state.substep || "accessibility_ask";
         var d = this.state.data;
         var promptText = this._getCurrentPromptText();
+        var isDashboard = s === "career_dashboard";
+        var tab = this.state.careerTab || "dashboard";
+
+        var voiceLabel = this.voiceLoopActive ? "Voice: On" : "Voice guidance";
+        var toolbar =
+          '<div class="db-toolbar" role="toolbar" aria-label="Accessibility controls">' +
+          '<button type="button" class="db-btn db-btn-voice" id="db-btn-voice-toggle" aria-pressed="' + (this.voiceLoopActive ? "true" : "false") + '">' +
+          '<span class="db-mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></span>' +
+          '<span class="db-voice-label">' + esc(voiceLabel) + '</span>' +
+          "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-repeat">' + esc(this._t("btnRepeat")) + "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-lang">' + esc(this._t("btnLang")) + "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-contrast">' + esc(this._t("btnContrast")) + "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-zoom-out">' + esc(this._t("btnZoomOut")) + "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-zoom-in">' + esc(this._t("btnZoomIn")) + " (" +
+          esc(Math.max(80, Math.min(200, Number(d.preferences.zoom_percent) || 100))) + "%)</button>" +
+          '<details class="db-colors-menu">' +
+          "<summary>Custom colors</summary>" +
+          '<div class="db-colors-popover">' +
+          '<label for="db-custom-bg">' + esc(this._t("customBgLabel") || "Background color") +
+          '<input type="color" id="db-custom-bg" value="' + esc(d.preferences.custom_bg || "#000000") + '" /></label>' +
+          '<label for="db-custom-fg">' + esc(this._t("customFgLabel") || "Text color") +
+          '<input type="color" id="db-custom-fg" value="' + esc(d.preferences.custom_fg || "#FFFFFF") + '" /></label>' +
+          '<button type="button" class="db-btn" id="db-apply-custom">' + esc(this._t("btnApplyColors") || "Apply colors") + "</button>" +
+          "</div></details>" +
+          "</div>";
+
+        var voiceMsg = this.voiceLoopActive
+          ? this._t("listeningStatus")
+          : (this.state.voiceReadingEnabled ? this._t("pausedStatus") : this._t("standardModeNote"));
+        var status =
+          '<div id="db-voice-status" class="db-sr-only" role="status" aria-live="polite">' + esc(voiceMsg) + "</div>" +
+          '<div class="db-voice-banner" role="status" aria-live="polite">' +
+          '<span class="db-voice-banner-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></span>' +
+          '<p class="db-voice-banner-text">' + esc(voiceMsg) + '</p>' +
+          '</div>' +
+          (this.lastNotice ? '<div class="db-status-banner" role="status" aria-live="polite">' + esc(this.lastNotice) + "</div>" : "") +
+          (this.lastError ? '<div class="db-error-banner" role="alert" aria-live="assertive">' + esc(this.lastError) + "</div>" : "");
+
+        var navHtml = isDashboard ? this._renderAccessPathNav(tab) : "";
+        var contentHtml = isDashboard ? this._renderAccessPath() : this._renderAuthOrOnboarding(s, d, promptText);
+
+        var isAuthFlow = (s === "accessibility_ask" || s === "auth_choice");
+        var showVisual = !isDashboard && isAuthFlow;
+
+        var sidebar = "";
+        if (isDashboard) {
+          sidebar =
+            '<aside class="db-sidebar" aria-label="AccessPath navigation">' +
+            '<div class="db-sidebar-card db-progress-card">' +
+            '<p class="db-sidebar-kicker">AccessPath</p>' +
+            '<p class="db-sidebar-step">Career workspace</p>' +
+            '</div>' +
+            navHtml +
+            "</aside>";
+        } else {
+          var stepNum = s.indexOf("login_") === 0 ? 1 : this.state.step === 2 ? 2 : 1;
+          var stepLabel = s.indexOf("login_") === 0 ? "Sign in" : "Registration";
+          var s1 = stepNum >= 1 ? "is-active" : "";
+          var s2 = stepNum >= 2 ? "is-active" : "";
+          sidebar =
+            '<aside class="db-sidebar db-sidebar-compact" aria-label="Registration progress">' +
+            '<div class="db-sidebar-card db-progress-card">' +
+            '<p class="db-sidebar-kicker">' + esc(stepLabel) + '</p>' +
+            '<p class="db-sidebar-step">Step ' + esc(stepNum) + ' of 2</p>' +
+            '<ol class="db-sidebar-steps" aria-label="Registration steps">' +
+            '<li class="' + s1 + '"><span class="db-step-num">1</span><span>Account &amp; accessibility</span></li>' +
+            '<li class="' + s2 + '"><span class="db-step-num">2</span><span>Verification &amp; profile</span></li>' +
+            '</ol>' +
+            '</div>' +
+            '<p class="db-sidebar-help">All features work without voice input. Use keyboard, touch, or screen reader at any time.</p>' +
+            "</aside>";
+        }
+
+        var topNav =
+          '<header class="db-topnav">' +
+          '<div class="db-topnav-brand">' +
+          '<span class="db-logo-mark" aria-hidden="true">SP</span>' +
+          '<div class="db-logo-text"><span class="db-logo-name">SelamPath</span><span class="db-logo-sub">AccessPath</span></div>' +
+          '</div>' +
+          toolbar +
+          '</header>';
+
+        var mainFooter =
+          '<footer class="db-main-footer">' +
+          '<div class="db-footer-brand"><span class="db-alx-mark">ALX</span><span>SelamPath · AccessPath</span></div>' +
+          '<div class="db-footer-shortcuts" aria-label="Accessibility shortcuts">' +
+          '<span><kbd>Space</kbd> / <kbd>Alt</kbd>+<kbd>A</kbd> Voice</span>' +
+          '<span><kbd>Esc</kbd> Pause</span>' +
+          '<span>Keyboard &amp; screen reader supported</span>' +
+          '</div>' +
+          '</footer>';
+
+        var contentBlock = contentHtml;
+        if (showVisual) {
+          contentBlock =
+            '<div class="db-auth-layout">' +
+            '<div class="db-auth-main">' + contentHtml + '</div>' +
+            '<aside class="db-auth-visual" aria-hidden="true">' +
+            '<img src="./assets/registration-visual.svg" alt="" class="db-visual-img" />' +
+            '<div class="db-visual-caption"><strong>Inclusive by design.</strong><span>Accessible learning and career pathways for everyone.</span></div>' +
+            '</aside>' +
+            '</div>';
+        }
 
         this.innerHTML =
           '<section class="db-widget-root" role="region" aria-label="SelamPath and AccessPath">' +
           '<div id="db-aria-live" class="db-sr-only" aria-live="assertive" aria-atomic="true"></div>' +
-          '<header class="db-brand">' +
-          '<div>' +
-          '<p class="db-brand-name">' +
-          esc(this._t("brandName") || "SelamPath") +
-          "</p>" +
-          '<p class="db-brand-tagline">' +
-          esc(this._t("brandTagline")) +
-          "</p>" +
+          '<div class="db-app ' + (isDashboard ? "db-app-dashboard" : "db-app-onboarding") + '">' +
+          topNav +
+          '<div class="db-shell ' + (isDashboard ? "db-shell-dashboard" : "db-shell-onboarding") + '">' +
+          sidebar +
+          '<main class="db-main" id="db-main-panel">' +
+          status +
+          '<div class="db-content">' +
+          contentBlock +
           "</div>" +
-          '<span class="db-brand-partner">AccessPath</span>' +
-          "</header>" +
-          '<div class="db-toolbar" role="toolbar" aria-label="Accessibility Controls">' +
-          '<button type="button" class="db-btn db-btn-primary" id="db-btn-voice-toggle">' +
-          esc(this.voiceLoopActive ? this._t("btnVoiceToggleOn") : this._t("btnVoiceToggleOff")) +
-          "</button>" +
-          '<button type="button" class="db-btn" id="db-btn-repeat">' +
-          esc(this._t("btnRepeat")) +
-          "</button>" +
-          '<button type="button" class="db-btn" id="db-btn-lang">' +
-          esc(this._t("btnLang")) +
-          "</button>" +
-          '<button type="button" class="db-btn" id="db-btn-contrast">' +
-          esc(this._t("btnContrast")) +
-          "</button>" +
-          '<button type="button" class="db-btn" id="db-btn-zoom-out">' +
-          esc(this._t("btnZoomOut")) +
-          "</button>" +
-          '<button type="button" class="db-btn" id="db-btn-zoom-in">' +
-          esc(this._t("btnZoomIn")) +
-          " (" +
-          esc(Math.max(80, Math.min(200, Number(d.preferences.zoom_percent) || 100))) +
-          "%)</button>" +
+          "</main>" +
           "</div>" +
-          '<details class="db-colors-panel" id="db-colors-panel">' +
-          "<summary>" +
-          esc(this._t("btnCustomColors")) +
-          "</summary>" +
-          '<div class="db-colors-grid">' +
-          '<label for="db-custom-bg">' +
-          esc(this._t("customBgLabel")) +
-          '<input type="color" id="db-custom-bg" value="' +
-          esc(d.preferences.custom_bg || "#000000") +
-          '" /></label>' +
-          '<label for="db-custom-fg">' +
-          esc(this._t("customFgLabel")) +
-          '<input type="color" id="db-custom-fg" value="' +
-          esc(d.preferences.custom_fg || "#FFFF00") +
-          '" /></label>' +
-          '<button type="button" class="db-btn" id="db-apply-custom">' +
-          esc(this._t("btnApplyColors")) +
-          "</button>" +
-          "</div></details>" +
-          '<div class="db-status-banner" id="db-voice-status" role="status" aria-live="polite">' +
-          esc(
-            this.voiceLoopActive
-              ? this._t("listeningStatus")
-              : this.state.voiceReadingEnabled
-              ? this._t("pausedStatus")
-              : this._t("standardModeNote")
-          ) +
+          mainFooter +
           "</div>" +
-          (this.lastNotice
-            ? '<div class="db-status-banner" role="status" aria-live="polite">' + esc(this.lastNotice) + "</div>"
-            : "") +
-          (this.lastError
-            ? '<div class="db-error-banner" role="alert" aria-live="assertive">' + esc(this.lastError) + "</div>"
-            : "") +
-          (s === "career_dashboard"
-            ? this._renderAccessPath()
-            : this._renderAuthOrOnboarding(s, d, promptText)) +
           "</section>";
 
         this._bindEvents();
@@ -1347,24 +1394,34 @@
 
       if (s === "accessibility_ask" || s === "auth_choice") {
         return (
-          "<div>" +
-          '<h2 id="db-step-heading" tabindex="-1">' +
-          esc(promptText) +
-          "</h2>" +
+          '<div class="db-auth-card-wrap">' +
+          '<section class="db-card db-central-card" aria-labelledby="db-step-heading">' +
+          '<p class="db-card-eyebrow">Account access</p>' +
+          '<h2 id="db-step-heading" tabindex="-1">' + esc(promptText) + "</h2>" +
+          '<p class="db-card-lead">Choose how you would like to continue. Voice, keyboard, and screen reader access are available at every step.</p>' +
           (s === "accessibility_ask"
-            ? '<div class="db-actions-row">' +
-              '<button type="button" class="db-btn db-btn-primary" id="db-btn-yes">Yes — Turn On Voice Reading (Y)</button>' +
-              '<button type="button" class="db-btn" id="db-btn-no">No — Use Keyboard / Screen Reader (N)</button>' +
-              "</div>"
+            ? '<div class="db-voice-prompt" role="group" aria-label="Voice guidance option">' +
+              '<button type="button" class="db-voice-cta" id="db-btn-yes">' +
+              '<span class="db-voice-cta-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></span>' +
+              '<span class="db-voice-cta-text"><strong>Enable voice guidance</strong><small>Hands-free support with spoken prompts (Y)</small></span>' +
+              '</button>' +
+              '<button type="button" class="db-btn db-btn-secondary" id="db-btn-no">Continue without voice (N)</button>' +
+              '</div>'
             : "") +
-          '<div class="db-card" style="margin-top:1rem;">' +
-          '<h3 style="margin-top:0;">Choose Account Action</h3>' +
-          '<div class="db-actions-row">' +
-          '<button type="button" class="db-btn db-btn-primary" id="db-go-login">1. Login to AccessPath</button>' +
-          '<button type="button" class="db-btn db-btn-primary" id="db-go-signup">2. Sign Up (Accessible Registration)</button>' +
-          '<button type="button" class="db-btn" id="db-first-contrast">Switch Contrast Theme</button>' +
-          "</div>" +
-          "</div>" +
+          '<div class="db-action-cards" role="group" aria-label="Account options">' +
+          '<button type="button" class="db-action-card" id="db-go-login">' +
+            '<span class="db-action-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24" focusable="false"><path fill="currentColor" d="M10 17v-2h4v-2h-4v-2l-4 3 4 3zm9-12H9a2 2 0 0 0-2 2v3h2V7h10v10H9v-3H7v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"/></svg></span>' +
+            '<span class="db-action-body"><span class="db-action-title">Log in</span><span class="db-action-desc">Access your existing SelamPath and AccessPath account.</span></span>' +
+            '<span class="db-action-arrow" aria-hidden="true">→</span>' +
+          '</button>' +
+          '<button type="button" class="db-action-card" id="db-go-signup">' +
+            '<span class="db-action-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24" focusable="false"><path fill="currentColor" d="M15 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-9 8v-1c0-2.66 5.33-4 8-4 .47 0 1 .03 1.56.09A5.98 5.98 0 0 0 14 19v1H6zm13-5v-2h-2v-2h2V9h2v2h2v2h-2v2h-2z"/></svg></span>' +
+            '<span class="db-action-body"><span class="db-action-title">Sign up</span><span class="db-action-desc">Create a new account with accessible, guided registration.</span></span>' +
+            '<span class="db-action-arrow" aria-hidden="true">→</span>' +
+          '</button>' +
+          '</div>' +
+          '<div class="db-auth-aux"><button type="button" class="db-link-btn" id="db-first-contrast">Adjust contrast theme</button></div>' +
+          "</section>" +
           "</div>"
         );
       }
@@ -1479,6 +1536,31 @@
       return html;
     }
 
+    _renderAccessPathNav(tab) {
+      var active = tab || this.state.careerTab || "dashboard";
+      var self = this;
+      function item(id, label) {
+        return (
+          '<button type="button" class="db-btn db-nav-item ' +
+          (active === id ? "is-active db-btn-primary" : "") +
+          '" data-tab="' + id + '" aria-current="' + (active === id ? "page" : "false") + '">' +
+          esc(label) +
+          "</button>"
+        );
+      }
+      return (
+        '<nav aria-label="AccessPath Navigation" class="db-side-nav">' +
+        item("dashboard", "Dashboard") +
+        item("careers", "Explore Careers (" + (self.careers.length || 6) + ")") +
+        item("roadmap", "My Learning Roadmap") +
+        item("passport", "Career Passport") +
+        item("jobs", "Career Opportunities") +
+        '<div class="db-side-nav-spacer"></div>' +
+        '<button type="button" class="db-btn db-nav-item db-nav-logout" id="db-btn-logout">Logout</button>' +
+        "</nav>"
+      );
+    }
+
     _renderAccessPath() {
       var tab = this.state.careerTab || "dashboard";
       var dash = this.dashboard || {};
@@ -1487,28 +1569,6 @@
       var passport = this.passport || {};
       var pct = Math.max(0, Math.min(100, Number(dash.progress_percent) || 0));
       var completedIds = dash.completed_stage_ids || [];
-
-      var nav =
-        '<nav aria-label="AccessPath Navigation" class="db-actions-row" style="margin-bottom:1.25rem;">' +
-        '<button type="button" class="db-btn ' +
-        (tab === "dashboard" ? "db-btn-primary" : "") +
-        '" data-tab="dashboard">Dashboard</button>' +
-        '<button type="button" class="db-btn ' +
-        (tab === "careers" ? "db-btn-primary" : "") +
-        '" data-tab="careers">Explore Careers (' +
-        esc(this.careers.length || 6) +
-        ")</button>" +
-        '<button type="button" class="db-btn ' +
-        (tab === "roadmap" ? "db-btn-primary" : "") +
-        '" data-tab="roadmap">My Learning Roadmap</button>' +
-        '<button type="button" class="db-btn ' +
-        (tab === "passport" ? "db-btn-primary" : "") +
-        '" data-tab="passport">Career Passport</button>' +
-        '<button type="button" class="db-btn ' +
-        (tab === "jobs" ? "db-btn-primary" : "") +
-        '" data-tab="jobs">Career Opportunities</button>' +
-        '<button type="button" class="db-btn" id="db-btn-logout">Logout</button>' +
-        "</nav>";
 
       if (tab === "careers") {
         var cards = this.careers
@@ -1547,22 +1607,20 @@
           })
           .join("");
         return (
-          nav +
-          '<h2 id="db-step-heading" tabindex="-1">Career Discovery &amp; Selection</h2><div class="db-grid">' +
+                    '<h2 id="db-step-heading" tabindex="-1">Career Discovery &amp; Selection</h2><div class="db-grid">' +
           cards +
           "</div>"
         );
       }
 
       if (tab === "passport") {
-        return this._renderCareerPassport(nav);
+        return this._renderCareerPassport();
       }
 
       if (tab === "roadmap") {
         if (!career) {
           return (
-            nav +
-            '<h2 id="db-step-heading" tabindex="-1">Personalized Learning Roadmap</h2>' +
+                      '<h2 id="db-step-heading" tabindex="-1">Personalized Learning Roadmap</h2>' +
             "<p>You have not selected a career path yet.</p>" +
             '<button type="button" class="db-btn db-btn-primary" data-tab="careers">Explore Careers Now</button>'
           );
@@ -1604,8 +1662,7 @@
           })
           .join("");
         return (
-          nav +
-          '<h2 id="db-step-heading" tabindex="-1">Roadmap: ' +
+                    '<h2 id="db-step-heading" tabindex="-1">Roadmap: ' +
           esc(career.title) +
           " (" +
           esc(pct) +
@@ -1672,8 +1729,7 @@
           : '<p class="db-card">No matching jobs found. Try clearing filters or posting an employer opportunity.</p>';
 
         return (
-          nav +
-          '<h2 id="db-step-heading" tabindex="-1">Career Opportunities &amp; Accessible Job Gateway</h2>' +
+                    '<h2 id="db-step-heading" tabindex="-1">Career Opportunities &amp; Accessible Job Gateway</h2>' +
           '<form id="db-job-filter-form" class="db-card">' +
           '<label for="db-job-q"><strong>Search Jobs (Type or Voice):</strong></label>' +
           '<input id="db-job-q" class="db-input" type="text" value="' +
@@ -1726,8 +1782,7 @@
       }
 
       return (
-        nav +
-        '<h2 id="db-step-heading" tabindex="-1">Welcome to AccessPath, ' +
+                  '<h2 id="db-step-heading" tabindex="-1">Welcome to AccessPath, ' +
         esc(this.state.data.full_name) +
         "</h2>" +
         '<div class="db-grid">' +
@@ -1796,12 +1851,11 @@
       );
     }
 
-    _renderCareerPassport(nav) {
+    _renderCareerPassport() {
       var p = this.passport;
       if (!p) {
         return (
-          nav +
-          '<h2 id="db-step-heading" tabindex="-1">Career Passport</h2>' +
+                    '<h2 id="db-step-heading" tabindex="-1">Career Passport</h2>' +
           '<p class="db-card">Your passport is being prepared. If it does not appear, refresh the page or log in again.</p>'
         );
       }
@@ -1884,8 +1938,7 @@
         : "<p>Choose a career path to start building your roadmap.</p>";
 
       return (
-        nav +
-        '<article class="db-passport" id="db-career-passport">' +
+                  '<article class="db-passport" id="db-career-passport">' +
         '<header class="db-passport-header">' +
         '<div>' +
         '<p class="db-passport-kicker">SelamPath · AccessPath</p>' +
@@ -2078,7 +2131,7 @@
           var bgEl = self.querySelector("#db-custom-bg");
           var fgEl = self.querySelector("#db-custom-fg");
           self.state.data.preferences.custom_bg = bgEl ? bgEl.value : "#000000";
-          self.state.data.preferences.custom_fg = fgEl ? fgEl.value : "#FFFF00";
+          self.state.data.preferences.custom_fg = fgEl ? fgEl.value : "#FFFFFF";
           self.state.data.preferences.contrast_mode = "custom";
           self.State.save(self.state);
           self._applyVisualPrefs();
