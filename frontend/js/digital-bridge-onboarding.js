@@ -1297,8 +1297,7 @@
         var navHtml = isDashboard ? this._renderAccessPathNav(tab) : "";
         var contentHtml = isDashboard ? this._renderAccessPath() : this._renderAuthOrOnboarding(s, d, promptText);
 
-        var isAuthFlow = (s === "accessibility_ask" || s === "auth_choice");
-        var showVisual = !isDashboard && isAuthFlow;
+        var showVisual = !isDashboard;
 
         var sidebar = "";
         if (isDashboard) {
