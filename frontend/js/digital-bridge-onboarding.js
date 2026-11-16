@@ -1443,8 +1443,8 @@
           : this._t("step1Title");
 
       var html = '<form id="db-wizard-form" novalidate>';
-      html += '<p style="margin-top:0; font-weight:700;">' + esc(stepLabel) + "</p>";
-      html += '<h2 id="db-step-heading" tabindex="-1" style="margin-top:0.25rem;">' + esc(promptText) + "</h2>";
+      html += '<p class="db-form-kicker">' + esc(stepLabel) + "</p>";
+      html += '<h2 id="db-step-heading" tabindex="-1">' + esc(promptText) + "</h2>";
 
       if (s === "language") {
         html +=
@@ -1468,7 +1468,7 @@
       if (textInputSteps.indexOf(s) !== -1) {
         var isPass = s === "password" || s === "confirm_password_reenter" || s === "login_password";
         html +=
-          '<div style="margin-top:1rem;">' +
+          '<div class="db-mt-1">' +
           '<label for="db-text-input" class="db-sr-only">' +
           esc(promptText) +
           "</label>" +
@@ -1486,7 +1486,7 @@
 
       if (s === "id_route") {
         html +=
-          '<fieldset style="border:none; padding:0; margin:1rem 0;">' +
+          '<fieldset class="db-fieldset">' +
           '<legend class="db-sr-only">Verification Route</legend>' +
           '<button type="button" class="db-option-card db-route-btn" data-route="1">1. ' +
           esc(labels.national_kebele_id) +
@@ -1518,14 +1518,14 @@
             : d.identity.document_number;
         html +=
           '<div class="db-status-banner">' +
-          '<p style="margin:0.25rem 0;"><strong>Name:</strong> ' +
+          '<p class="db-profile-row"><strong>Name:</strong> ' +
           esc(d.full_name) +
           "</p>" +
-          '<p style="margin:0.25rem 0;"><strong>ID Route:</strong> ' +
+          '<p class="db-profile-row"><strong>ID Route:</strong> ' +
           esc(labels[d.identity.route] || d.identity.route) +
           "</p>" +
-          (docRef ? '<p style="margin:0.25rem 0;"><strong>Reference:</strong> ' + esc(docRef) + "</p>" : "") +
-          '<p style="margin:0.25rem 0;"><strong>Contact:</strong> ' +
+          (docRef ? '<p class="db-profile-row"><strong>Reference:</strong> ' + esc(docRef) + "</p>" : "") +
+          '<p class="db-profile-row"><strong>Contact:</strong> ' +
           esc(d.identity.contact_value) +
           "</p>" +
           "</div>";
@@ -1585,7 +1585,7 @@
             var isSelected = career && career.id === c.id;
             return (
               '<article class="db-card">' +
-              '<h3 style="margin-top:0;">' +
+              '<h3>' +
               esc(i + 1) +
               ". " +
               esc(c.title) +
@@ -1640,7 +1640,7 @@
             var isDone = completedIds.indexOf(st.id) !== -1;
             return (
               '<article class="db-card">' +
-              '<h3 style="margin-top:0;">Stage ' +
+              '<h3>Stage ' +
               esc(idx + 1) +
               ": " +
               esc(st.title) +
@@ -1683,7 +1683,7 @@
           '<div class="db-progress-fill" style="width:' +
           esc(pct) +
           '%;"></div></div>' +
-          '<div style="margin-top:1rem;">' +
+          '<div class="db-mt-1">' +
           stagesHtml +
           "</div>"
         );
@@ -1699,7 +1699,7 @@
                   (j.hiringOrganization && j.hiringOrganization.name) || "Employer";
                 return (
                   '<article class="db-card">' +
-                  '<h3 style="margin-top:0;">' +
+                  '<h3>' +
                   esc(j.title) +
                   " — " +
                   esc(employer) +
@@ -1716,19 +1716,19 @@
                   '<button type="button" class="db-btn db-btn-primary db-open-apply" data-job-id="' +
                   esc(j.id) +
                   '">' +
-                  (isApplying ? "Close Application Form" : "Apply (Voice or Typing)") +
+                  (isApplying ? "Close application form" : "Apply now") +
                   "</button>" +
                   (isApplying
                     ? '<form class="db-apply-form" data-job-id="' +
                       esc(j.id) +
-                      '" style="margin-top:1rem;">' +
-                      '<label for="db-app-pitch"><strong>Your Application Pitch (Type or Dictate):</strong></label>' +
+                      '">' +
+                      '<label for="db-app-pitch"><strong>Your application pitch:</strong></label>' +
                       '<textarea id="db-app-pitch" class="db-textarea" required placeholder="Explain why you are a good fit..."></textarea>' +
-                      '<div class="db-actions-row"><button type="button" class="db-btn" id="db-dictate-pitch">Dictate Pitch by Voice</button></div>' +
-                      '<label for="db-app-accom" style="display:block;margin-top:0.75rem;"><strong>Interview Accommodation Request (Optional, No Medical Proof):</strong></label>' +
+                      '<div class="db-actions-row"><button type="button" class="db-btn" id="db-dictate-pitch">Dictate pitch</button></div>' +
+                      '<label for="db-app-accom"><strong>Interview accommodations (optional &mdash; no medical proof ever required):</strong></label>' +
                       '<input id="db-app-accom" class="db-input" type="text" placeholder="e.g., Screen-reader test, extra time, Amharic interpreter" />' +
                       '<div class="db-actions-row">' +
-                      '<button type="button" class="db-btn" id="db-dictate-accom">Dictate Accommodation</button>' +
+                      '<button type="button" class="db-btn" id="db-dictate-accom">Dictate</button>' +
                       '<button type="submit" class="db-btn db-btn-primary">Submit Job Application</button>' +
                       "</div></form>"
                     : "") +
@@ -1736,7 +1736,7 @@
                 );
               })
               .join("")
-          : '<p class="db-card">No matching jobs found. Try clearing filters or posting an employer opportunity.</p>';
+          : '<p class="db-card">No jobs match your filters yet. Try clearing the filters or check back soon &mdash; employers are posting inclusive roles.</p>';
 
         return (
                     '<h2 id="db-step-heading" tabindex="-1">Career Opportunities &amp; Accessible Job Gateway</h2>' +
@@ -1746,7 +1746,7 @@
           '<input id="db-job-q" class="db-input" type="text" value="' +
           esc(this.jobSearchQuery) +
           '" placeholder="e.g., developer, support, analyst" />' +
-          '<label for="db-job-support" style="display:block;margin-top:0.75rem;"><strong>Private "Support I Need" Filter:</strong></label>' +
+          '<label for="db-job-support"><strong>Support I need <small>(kept private)</small>:</strong></label>' +
           '<select id="db-job-support" class="db-select">' +
           '<option value="">All inclusive jobs</option>' +
           '<option value="screen_reader_compatible" ' +
@@ -1766,26 +1766,26 @@
           ">Audio training</option>" +
           "</select>" +
           '<div class="db-actions-row">' +
-          '<button type="submit" class="db-btn db-btn-primary">Search / Apply Filter</button>' +
-          '<button type="button" class="db-btn" id="db-dictate-job-search">Dictate Search</button>' +
+          '<button type="submit" class="db-btn db-btn-primary">Apply filters</button>' +
+          '<button type="button" class="db-btn" id="db-dictate-job-search">Dictate search</button>' +
           '<button type="button" class="db-btn" id="db-toggle-employer">' +
-          (this.showEmployerForm ? "Hide Employer Form" : "Employer: Post Inclusive Job") +
+          (this.showEmployerForm ? "Hide job form" : "Employers: post a job") +
           "</button>" +
           "</div></form>" +
           (this.showEmployerForm
             ? '<form id="db-employer-form" class="db-card">' +
-              '<h3 style="margin-top:0;">Employer Form — Post Job &amp; Accommodations</h3>' +
+              '<h3>Post an inclusive job</h3>' +
               '<label for="db-emp-title">Job Title</label>' +
               '<input id="db-emp-title" class="db-input" required />' +
-              '<label for="db-emp-name" style="display:block;margin-top:0.5rem;">Employer Name</label>' +
+              '<label for="db-emp-name"><strong>Employer name</strong></label>' +
               '<input id="db-emp-name" class="db-input" required />' +
-              '<label for="db-emp-loc" style="display:block;margin-top:0.5rem;">Location</label>' +
+              '<label for="db-emp-loc"><strong>Location</strong></label>' +
               '<input id="db-emp-loc" class="db-input" value="Addis Ababa / Remote" required />' +
-              '<label for="db-emp-desc" style="display:block;margin-top:0.5rem;">Description</label>' +
+              '<label for="db-emp-desc"><strong>Description</strong></label>' +
               '<textarea id="db-emp-desc" class="db-textarea" required></textarea>' +
-              '<label for="db-emp-accom" style="display:block;margin-top:0.5rem;">Accommodations Offered (comma-separated)</label>' +
+              '<label for="db-emp-accom"><strong>Accommodations offered (comma-separated)</strong></label>' +
               '<input id="db-emp-accom" class="db-input" value="screen_reader_compatible, flexible_hours" />' +
-              '<div class="db-actions-row"><button type="submit" class="db-btn db-btn-primary">Publish Accessible Job</button></div>' +
+              '<div class="db-actions-row"><button type="submit" class="db-btn db-btn-primary">Publish job</button></div>' +
               "</form>"
             : "") +
           jobsHtml
@@ -1799,7 +1799,7 @@
         '<p class="db-card-lead">Your career workspace. Track your roadmap progress, build skills, and turn your journey into a Career Passport employers can trust.</p>' +
         '<div class="db-grid">' +
         '<section class="db-card">' +
-        '<h3 style="margin-top:0;">Selected Career &amp; Progress</h3>' +
+        '<h3>Selected Career &amp; Progress</h3>' +
         "<p><strong>Career Path:</strong> " +
         esc(career ? career.title : "Not selected yet") +
         "</p>" +
@@ -1822,16 +1822,16 @@
             ? dash.recommended_next_stage.title
             : career
             ? "All stages complete! Explore jobs."
-            : "Explore the 6 career pathways."
+            : "Explore the career pathways."
         ) +
         "</p>" +
         '<div class="db-actions-row">' +
         (career
           ? '<button type="button" class="db-btn db-btn-primary" data-tab="roadmap">Resume Roadmap</button>'
-          : '<button type="button" class="db-btn db-btn-primary" data-tab="careers">Explore 6 Careers</button>') +
+          : '<button type="button" class="db-btn db-btn-primary" data-tab="careers">Explore careers</button>') +
         "</div></section>" +
         '<section class="db-card">' +
-        '<h3 style="margin-top:0;">Profile &amp; Accessibility</h3>' +
+        '<h3>Profile &amp; Accessibility</h3>' +
         "<p><strong>Name:</strong> " +
         esc(user.full_name || this.state.data.full_name) +
         "</p>" +
@@ -1850,7 +1850,7 @@
         "</p>" +
         "</section>" +
         '<section class="db-card">' +
-        '<h3 style="margin-top:0;">Career Passport</h3>' +
+        '<h3>Career Passport</h3>' +
         "<p>Turn your roadmap progress into a shareable readiness summary for employers and programs.</p>" +
         "<p><strong>Readiness:</strong> " +
         esc((passport.readiness && passport.readiness.label) || "Exploring pathways") +
@@ -1969,7 +1969,7 @@
         "</p>" +
         '<div class="db-grid">' +
         '<section class="db-card">' +
-        '<h3 style="margin-top:0;">Career Direction</h3>' +
+        '<h3>Career Direction</h3>' +
         "<p><strong>Path:</strong> " +
         esc(p.career ? p.career.title : "Not selected yet") +
         "</p>" +
@@ -1992,7 +1992,7 @@
         nextHtml +
         "</section>" +
         '<section class="db-card">' +
-        '<h3 style="margin-top:0;">Verified Identity</h3>' +
+        '<h3>Verified Identity</h3>' +
         "<p><strong>Contact:</strong> " +
         esc(
           learner.contact_verified
@@ -2008,19 +2008,19 @@
         "</p>" +
         "</section>" +
         '<section class="db-card">' +
-        '<h3 style="margin-top:0;">Skills &amp; Learning</h3>' +
+        '<h3>Skills &amp; Learning</h3>' +
         "<p><strong>Completed stages:</strong></p>" +
         completedHtml +
         "<p><strong>Acquired skills:</strong></p>" +
         skillsHtml +
         "</section>" +
         '<section class="db-card">' +
-        '<h3 style="margin-top:0;">Workplace Support</h3>' +
+        '<h3>Workplace Support</h3>' +
         "<p><strong>Support preferences:</strong></p>" +
         supportHtml +
         "</section>" +
         '<section class="db-card">' +
-        '<h3 style="margin-top:0;">AccessPath Activity</h3>' +
+        '<h3>AccessPath Activity</h3>' +
         "<p><strong>Applications submitted:</strong> " +
         esc(apps.count || 0) +
         "</p>" +
