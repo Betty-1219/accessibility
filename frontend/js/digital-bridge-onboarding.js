@@ -1257,13 +1257,16 @@
         var tab = this.state.careerTab || "dashboard";
 
         var voiceLabel = this.voiceLoopActive ? "Voice: On" : "Voice guidance";
+        var contrastMode = esc(String((d.preferences && d.preferences.contrast_mode) || "default"));
+        var langName = this.lang === "am" ? "Amharic" : "English";
+        var langTarget = this.lang === "am" ? "switch to English" : "switch to Amharic";
         var toolbarLeft =
           '<div class="db-toolbar db-toolbar-left" role="toolbar" aria-label="Display tools">' +
-          '<button type="button" class="db-btn" id="db-btn-contrast" title="Change contrast theme" aria-label="Change contrast theme">' +
+          '<button type="button" class="db-btn" id="db-btn-contrast" title="Contrast: ' + contrastMode + ' — click to change" aria-label="Contrast: ' + contrastMode + ' — click to change">' +
           '<span class="db-mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20z" fill="currentColor" stroke="none"/></svg></span>' +
           esc(this._t("btnContrast")) +
           "</button>" +
-          '<button type="button" class="db-btn" id="db-btn-lang">' + esc(this._t("btnLang")) + "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-lang" title="Language: ' + langName + ' — ' + langTarget + '" aria-label="Language: ' + langName + ' — ' + langTarget + '">' + esc(this._t("btnLang")) + "</button>" +
           "</div>";
         var toolbarRight =
           '<div class="db-toolbar db-toolbar-right" role="toolbar" aria-label="Voice and zoom controls">' +
@@ -1279,12 +1282,15 @@
         var voiceMsg = this.voiceLoopActive
           ? this._t("listeningStatus")
           : (this.state.voiceReadingEnabled ? this._t("pausedStatus") : this._t("standardModeNote"));
+        var voiceBannerVisible = this.voiceLoopActive || !!this.state.voiceReadingEnabled;
         var status =
           '<div id="db-voice-status" class="db-sr-only" role="status" aria-live="polite">' + esc(voiceMsg) + "</div>" +
-          '<div class="db-voice-banner" role="status" aria-live="polite">' +
-          '<span class="db-voice-banner-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></span>' +
-          '<p class="db-voice-banner-text">' + esc(voiceMsg) + '</p>' +
-          '</div>' +
+          (voiceBannerVisible
+            ? '<div class="db-voice-banner" role="status" aria-live="polite">' +
+              '<span class="db-voice-banner-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></span>' +
+              '<p class="db-voice-banner-text">' + esc(voiceMsg) + '</p>' +
+              '</div>'
+            : "") +
           (this.lastNotice ? '<div class="db-status-banner" role="status" aria-live="polite">' + esc(this.lastNotice) + "</div>" : "") +
           (this.lastError ? '<div class="db-error-banner" role="alert" aria-live="assertive">' + esc(this.lastError) + "</div>" : "");
 
