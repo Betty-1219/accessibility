@@ -219,6 +219,7 @@ body.db-theme-dark_white,
 
 .db-widget-root {
   font-size: calc(1rem * var(--db-zoom));
+  zoom: var(--db-zoom);
   position: relative;
   background: transparent;
   color: var(--db-fg);
