@@ -1331,10 +1331,25 @@
 
         var mainFooter =
           '<footer class="db-main-footer">' +
-          '<div class="db-footer-brand"><span class="db-footer-name">SelamPath</span><span class="db-footer-tagline">Inclusive onboarding and careers</span></div>' +
-          '<div class="db-footer-shortcuts" aria-label="Accessibility shortcuts">' +
-          '<span><kbd>Alt</kbd>+<kbd>A</kbd> Voice</span>' +
-          '<span><kbd>Esc</kbd> Pause</span>' +
+          '<div class="db-footer-inner">' +
+          '<div class="db-footer-top">' +
+          '<div class="db-footer-brand">' +
+          '<span class="db-footer-mark" aria-hidden="true">X</span>' +
+          '<div class="db-footer-brand-text">' +
+          '<span class="db-footer-name">SelamPath</span>' +
+          '<span class="db-footer-tagline">Accessible onboarding and inclusive careers for every learner</span>' +
+          '</div>' +
+          '</div>' +
+          '<div class="db-footer-shortcuts" aria-label="Keyboard shortcuts">' +
+          '<span class="db-shortcut"><kbd>Alt</kbd>+<kbd>A</kbd><small>Voice guidance</small></span>' +
+          '<span class="db-shortcut"><kbd>Space</kbd><small>Start voice</small></span>' +
+          '<span class="db-shortcut"><kbd>Esc</kbd><small>Pause voice</small></span>' +
+          '</div>' +
+          '</div>' +
+          '<div class="db-footer-bottom">' +
+          '<p>&copy; ' + esc(String(new Date().getFullYear())) + ' SelamPath &middot; AccessPath. All rights reserved.</p>' +
+          '<p class="db-footer-note">Inclusive by design &mdash; built with and for learners in Ethiopia</p>' +
+          '</div>' +
           '</div>' +
           '</footer>';
 

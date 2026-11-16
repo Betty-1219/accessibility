@@ -752,26 +752,64 @@ body.db-theme-dark_yellow .db-sidebar-step, body.db-theme-light_yellow .db-sideb
 .db-content { min-width: 0; width: 100%; flex: 1; }
 
 .db-main-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  padding: 1rem 1.25rem;
   background: #111827;
   color: #9ca3af;
   font-size: 0.84rem;
   border-top: 1px solid #0b1220;
 }
-.db-footer-brand { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; flex-wrap: wrap; }
+.db-footer-inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 1.4rem 1.25rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.05rem;
+}
+.db-footer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem 1.5rem;
+  flex-wrap: wrap;
+}
+.db-footer-brand { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
+.db-footer-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; flex: 0 0 auto;
+  color: #FF6B00; font-weight: 900; font-size: 1.15rem; line-height: 1;
+  letter-spacing: -0.02em;
+}
+.db-footer-brand-text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
 .db-footer-name {
   color: #f9fafb; font-weight: 700; font-size: 0.95rem; letter-spacing: -0.01em;
 }
-.db-footer-tagline { color: #6b7280; }
-.db-footer-shortcuts { display: flex; flex-wrap: wrap; gap: 0.6rem 1.1rem; align-items: center; color: #6b7280; font-size: 0.82rem; }
-.db-footer-shortcuts span { display: inline-flex; align-items: center; gap: 0.35rem; }
-.db-main-footer kbd, .db-footer-shortcuts kbd {
-  padding: 0.1rem 0.4rem;
+.db-footer-tagline { color: #6b7280; font-size: 0.8rem; line-height: 1.4; }
+.db-footer-shortcuts { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.db-shortcut {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  padding: 0.28rem 0.65rem;
+  border: 1px solid #1f2937;
+  border-radius: 999px;
+  background: #0f1626;
+  color: #9ca3af;
+  font-size: 0.78rem;
+}
+.db-shortcut small { color: #6b7280; font-size: 0.78rem; }
+.db-footer-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 1.25rem;
+  flex-wrap: wrap;
+  padding-top: 0.95rem;
+  border-top: 1px solid #1f2937;
+  font-size: 0.78rem;
+  color: #6b7280;
+}
+.db-footer-bottom p { margin: 0; }
+.db-footer-note { color: #4b5563; }
+.db-main-footer kbd {
+  padding: 0.08rem 0.4rem;
   border: 1px solid #374151;
   border-bottom-width: 2px;
   border-radius: 5px;
@@ -944,7 +982,8 @@ body.db-theme-dark_yellow .db-voice-banner, body.db-theme-light_yellow .db-voice
   background: var(--db-card-bg) !important; color: var(--db-fg) !important; border-color: var(--db-border) !important; box-shadow: none !important;
 }
 body.db-theme-dark_yellow .db-voice-cta-icon, body.db-theme-light_yellow .db-voice-cta-icon, body.db-theme-dark_white .db-voice-cta-icon,
-body.db-theme-dark_yellow .db-logo-mark, body.db-theme-light_yellow .db-logo-mark, body.db-theme-dark_white .db-logo-mark {
+body.db-theme-dark_yellow .db-logo-mark, body.db-theme-light_yellow .db-logo-mark, body.db-theme-dark_white .db-logo-mark,
+body.db-theme-dark_yellow .db-footer-mark, body.db-theme-light_yellow .db-footer-mark, body.db-theme-dark_white .db-footer-mark {
   background: none !important; color: var(--db-accent) !important; box-shadow: none !important;
 }
 body.db-theme-dark_yellow .db-logo-name, body.db-theme-light_yellow .db-logo-name, body.db-theme-dark_white .db-logo-name,
@@ -981,8 +1020,9 @@ body.db-theme-dark_yellow .db-sidebar-steps li.is-active .db-step-num, body.db-t
   .db-topnav .db-btn, .db-action-card { width: 100%; }
   .db-toolbar { gap: 0.4rem; }
   .db-toolbar .db-btn { flex: 1 1 calc(50% - 0.4rem); justify-content: center; }
-  .db-main-footer { flex-direction: column; align-items: flex-start; gap: 0.6rem; }
-  .db-footer-shortcuts { flex-direction: column; align-items: flex-start; gap: 0.35rem; }
+  .db-footer-top { flex-direction: column; align-items: flex-start; gap: 0.8rem; }
+  .db-footer-bottom { flex-direction: column; align-items: flex-start; }
+  .db-footer-shortcuts { gap: 0.35rem; }
   .db-auth-visual { display: none; }
 }
 @media (prefers-reduced-motion: no-preference) {
