@@ -1263,9 +1263,7 @@
           '<span class="db-mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></span>' +
           '<span class="db-voice-label">' + esc(voiceLabel) + '</span>' +
           "</button>" +
-          '<button type="button" class="db-btn" id="db-btn-repeat">' + esc(this._t("btnRepeat")) + "</button>" +
           '<button type="button" class="db-btn" id="db-btn-lang">' + esc(this._t("btnLang")) + "</button>" +
-          '<button type="button" class="db-btn" id="db-btn-contrast">' + esc(this._t("btnContrast")) + "</button>" +
           '<button type="button" class="db-btn" id="db-btn-zoom-out">' + esc(this._t("btnZoomOut")) + "</button>" +
           '<button type="button" class="db-btn" id="db-btn-zoom-in">' + esc(this._t("btnZoomIn")) + " (" +
           esc(Math.max(80, Math.min(200, Number(d.preferences.zoom_percent) || 100))) + "%)</button>" +
@@ -1330,15 +1328,15 @@
         var topNav =
           '<header class="db-topnav">' +
           '<div class="db-topnav-brand">' +
-          '<span class="db-logo-mark" aria-hidden="true">SP</span>' +
-          '<div class="db-logo-text"><span class="db-logo-name">SelamPath</span><span class="db-logo-sub">AccessPath</span></div>' +
+          '<span class="db-logo-mark" aria-hidden="true">X</span>' +
+          '<div class="db-logo-text"><span class="db-logo-name">SelamPath</span><span class="db-logo-sub">AccessPath · Career Gateway</span></div>' +
           '</div>' +
           toolbar +
           '</header>';
 
         var mainFooter =
           '<footer class="db-main-footer">' +
-          '<div class="db-footer-brand"><span class="db-alx-mark">ALX</span><span>SelamPath · AccessPath</span></div>' +
+          '<div class="db-footer-brand"><span class="db-alx-mark">ALX</span><span>SelamPath · AccessPath — inclusive onboarding and careers for every learner</span></div>' +
           '<div class="db-footer-shortcuts" aria-label="Accessibility shortcuts">' +
           '<span><kbd>Space</kbd> / <kbd>Alt</kbd>+<kbd>A</kbd> Voice</span>' +
           '<span><kbd>Esc</kbd> Pause</span>' +
@@ -1607,7 +1605,8 @@
           })
           .join("");
         return (
-                    '<h2 id="db-step-heading" tabindex="-1">Career Discovery &amp; Selection</h2><div class="db-grid">' +
+                    '<h2 id="db-step-heading" tabindex="-1">Career Discovery &amp; Selection</h2>' +
+          '<p class="db-card-lead">Explore ' + esc(this.careers.length || 6) + ' career pathways designed around your strengths and accessibility needs. Pick one to unlock your personal learning roadmap.</p><div class="db-grid">' +
           cards +
           "</div>"
         );
@@ -1621,7 +1620,7 @@
         if (!career) {
           return (
                       '<h2 id="db-step-heading" tabindex="-1">Personalized Learning Roadmap</h2>' +
-            "<p>You have not selected a career path yet.</p>" +
+            '<p class="db-card-lead">Choose a career path first and we will build a step-by-step roadmap with clear objectives, skills, and resources for each stage.</p>' +
             '<button type="button" class="db-btn db-btn-primary" data-tab="careers">Explore Careers Now</button>'
           );
         }
@@ -1730,6 +1729,7 @@
 
         return (
                     '<h2 id="db-step-heading" tabindex="-1">Career Opportunities &amp; Accessible Job Gateway</h2>' +
+          '<p class="db-card-lead">Browse inclusive employers, filter by the support you need, and apply with voice or typing. Every employer here is committed to accessible interviews.</p>' +
           '<form id="db-job-filter-form" class="db-card">' +
           '<label for="db-job-q"><strong>Search Jobs (Type or Voice):</strong></label>' +
           '<input id="db-job-q" class="db-input" type="text" value="' +
@@ -1785,6 +1785,7 @@
                   '<h2 id="db-step-heading" tabindex="-1">Welcome to AccessPath, ' +
         esc(this.state.data.full_name) +
         "</h2>" +
+        '<p class="db-card-lead">Your career workspace. Track your roadmap progress, build skills, and turn your journey into a Career Passport employers can trust.</p>' +
         '<div class="db-grid">' +
         '<section class="db-card">' +
         '<h3 style="margin-top:0;">Selected Career &amp; Progress</h3>' +
@@ -2107,14 +2108,8 @@
           self.startHandsFreeLoop();
         }
       });
-      on("#db-btn-repeat", function () {
-        self.voice.speak(self._getCurrentPromptText(), self.lang);
-      });
       on("#db-btn-lang", function () {
         self._handleLanguageChoice(self.lang === "en" ? "am" : "en");
-      });
-      on("#db-btn-contrast", function () {
-        self._cycleContrast();
       });
       on("#db-first-contrast", function () {
         self._cycleContrast();
