@@ -1267,15 +1267,6 @@
           '<button type="button" class="db-btn" id="db-btn-zoom-out">' + esc(this._t("btnZoomOut")) + "</button>" +
           '<button type="button" class="db-btn" id="db-btn-zoom-in">' + esc(this._t("btnZoomIn")) + " (" +
           esc(Math.max(80, Math.min(200, Number(d.preferences.zoom_percent) || 100))) + "%)</button>" +
-          '<details class="db-colors-menu">' +
-          "<summary>Custom colors</summary>" +
-          '<div class="db-colors-popover">' +
-          '<label for="db-custom-bg">' + esc(this._t("customBgLabel") || "Background color") +
-          '<input type="color" id="db-custom-bg" value="' + esc(d.preferences.custom_bg || "#000000") + '" /></label>' +
-          '<label for="db-custom-fg">' + esc(this._t("customFgLabel") || "Text color") +
-          '<input type="color" id="db-custom-fg" value="' + esc(d.preferences.custom_fg || "#FFFFFF") + '" /></label>' +
-          '<button type="button" class="db-btn" id="db-apply-custom">' + esc(this._t("btnApplyColors") || "Apply colors") + "</button>" +
-          "</div></details>" +
           "</div>";
 
         var voiceMsg = this.voiceLoopActive
@@ -1300,10 +1291,6 @@
         if (isDashboard) {
           sidebar =
             '<aside class="db-sidebar" aria-label="AccessPath navigation">' +
-            '<div class="db-sidebar-card db-progress-card">' +
-            '<p class="db-sidebar-kicker">AccessPath</p>' +
-            '<p class="db-sidebar-step">Career workspace</p>' +
-            '</div>' +
             navHtml +
             "</aside>";
         } else {
@@ -1329,18 +1316,17 @@
           '<header class="db-topnav">' +
           '<div class="db-topnav-brand">' +
           '<span class="db-logo-mark" aria-hidden="true">X</span>' +
-          '<div class="db-logo-text"><span class="db-logo-name">SelamPath</span><span class="db-logo-sub">AccessPath · Career Gateway</span></div>' +
+          '<div class="db-logo-text"><span class="db-logo-name">SelamPath</span><span class="db-logo-sub">Career Gateway</span></div>' +
           '</div>' +
           toolbar +
           '</header>';
 
         var mainFooter =
           '<footer class="db-main-footer">' +
-          '<div class="db-footer-brand"><span class="db-alx-mark">ALX</span><span>SelamPath · AccessPath — inclusive onboarding and careers for every learner</span></div>' +
+          '<div class="db-footer-brand"><span class="db-footer-name">SelamPath</span><span class="db-footer-tagline">Inclusive onboarding and careers</span></div>' +
           '<div class="db-footer-shortcuts" aria-label="Accessibility shortcuts">' +
-          '<span><kbd>Space</kbd> / <kbd>Alt</kbd>+<kbd>A</kbd> Voice</span>' +
+          '<span><kbd>Alt</kbd>+<kbd>A</kbd> Voice</span>' +
           '<span><kbd>Esc</kbd> Pause</span>' +
-          '<span>Keyboard &amp; screen reader supported</span>' +
           '</div>' +
           '</footer>';
 
@@ -1827,9 +1813,6 @@
         "<p><strong>Language:</strong> " +
         (this.lang === "am" ? "Amharic" : "English") +
         "</p>" +
-        "<p><strong>Contrast:</strong> " +
-        esc(this.state.data.preferences.contrast_mode) +
-        "</p>" +
         "<p><strong>Zoom:</strong> " +
         esc(this.state.data.preferences.zoom_percent) +
         "%</p>" +
@@ -2119,35 +2102,6 @@
       });
       on("#db-btn-zoom-in", function () {
         self._zoomBy(25);
-      });
-      var applyColors = this.querySelector("#db-apply-custom");
-      if (applyColors) {
-        applyColors.addEventListener("click", function () {
-          var bgEl = self.querySelector("#db-custom-bg");
-          var fgEl = self.querySelector("#db-custom-fg");
-          self.state.data.preferences.custom_bg = bgEl ? bgEl.value : "#000000";
-          self.state.data.preferences.custom_fg = fgEl ? fgEl.value : "#FFFFFF";
-          self.state.data.preferences.contrast_mode = "custom";
-          self.State.save(self.state);
-          self._applyVisualPrefs();
-          self.render();
-          self._announceLive("Custom colours applied.");
-        });
-      }
-      [
-        ["#db-custom-bg", "custom_bg"],
-        ["#db-custom-fg", "custom_fg"],
-      ].forEach(function (pair) {
-        var input = self.querySelector(pair[0]);
-        if (!input) {
-          return;
-        }
-        input.addEventListener("input", function () {
-          self.state.data.preferences[pair[1]] = input.value;
-          self.state.data.preferences.contrast_mode = "custom";
-          self.State.save(self.state);
-          self._applyVisualPrefs();
-        });
       });
       on("#db-btn-back", function () {
         self._goBack();

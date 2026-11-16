@@ -302,28 +302,6 @@ body.db-theme-dark_white,
 .db-mic-icon, .db-voice-banner-icon { display: inline-flex; align-items: center; justify-content: center; }
 .db-mic-icon svg { display: block; }
 
-.db-colors-menu { position: relative; }
-.db-colors-menu > summary {
-  list-style: none; cursor: pointer;
-  min-height: 40px; padding: 0.45rem 0.75rem;
-  font-size: 0.88rem; font-weight: 600;
-  border-radius: 8px; border: 1px solid #374151;
-  background: #2d3748; color: #f3f4f6;
-  display: inline-flex; align-items: center;
-}
-.db-colors-menu > summary::-webkit-details-marker { display: none; }
-.db-colors-menu[open] > summary { border-color: #FF6B00; }
-.db-colors-popover {
-  position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
-  background: #fff; color: #111827; border: 1px solid #e5e7eb; border-radius: 10px;
-  padding: 0.75rem; box-shadow: 0 12px 30px rgba(17,24,39,0.15);
-  display: flex; flex-direction: column; gap: 0.6rem; min-width: 220px;
-}
-.db-colors-popover label { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 0.9rem; font-weight: 600; color: #374151; }
-.db-colors-popover input[type="color"] { width: 56px; height: 36px; border: 1px solid #d1d5db; border-radius: 6px; padding: 0; background: #fff; cursor: pointer; }
-.db-colors-popover .db-btn { background: #f3f4f6; color: #111827; border-color: #d1d5db; min-height: 40px; }
-.db-colors-popover .db-btn:hover { background: #e5e7eb; }
-
 .db-btn {
   min-width: 48px;
   min-height: 44px;
@@ -723,10 +701,11 @@ body.db-theme-dark_yellow .db-sidebar-step, body.db-theme-light_yellow .db-sideb
 .db-topnav-brand { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
 .db-logo-mark {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px; border-radius: 9px;
-  background: linear-gradient(135deg, #FF6B00, #ff8a33);
-  color: #fff; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.02em;
-  box-shadow: 0 2px 8px rgba(255,107,0,0.35);
+  width: auto; height: auto; border-radius: 0;
+  background: none; box-shadow: none;
+  color: #FF6B00; font-weight: 900; font-size: 1.55rem; line-height: 1;
+  letter-spacing: -0.02em; font-family: inherit;
+  transform: translateY(-1px);
 }
 .db-logo-text { display: flex; flex-direction: column; line-height: 1.15; }
 .db-logo-name { font-weight: 700; font-size: 1rem; color: #fff; letter-spacing: -0.01em; }
@@ -777,19 +756,18 @@ body.db-theme-dark_yellow .db-sidebar-step, body.db-theme-light_yellow .db-sideb
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
-  padding: 0.85rem 1.25rem;
+  padding: 1rem 1.25rem;
   background: #111827;
-  color: #d1d5db;
-  font-size: 0.88rem;
+  color: #9ca3af;
+  font-size: 0.84rem;
   border-top: 1px solid #0b1220;
 }
-.db-footer-brand { display: flex; align-items: center; gap: 0.75rem; }
-.db-alx-mark {
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 0.2rem 0.55rem; border-radius: 6px;
-  background: #FF6B00; color: #fff; font-weight: 800; font-size: 0.78rem; letter-spacing: 0.08em;
+.db-footer-brand { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; flex-wrap: wrap; }
+.db-footer-name {
+  color: #f9fafb; font-weight: 700; font-size: 0.95rem; letter-spacing: -0.01em;
 }
-.db-footer-shortcuts { display: flex; flex-wrap: wrap; gap: 0.9rem 1.25rem; align-items: center; color: #9ca3af; }
+.db-footer-tagline { color: #6b7280; }
+.db-footer-shortcuts { display: flex; flex-wrap: wrap; gap: 0.6rem 1.1rem; align-items: center; color: #6b7280; font-size: 0.82rem; }
 .db-footer-shortcuts span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .db-main-footer kbd, .db-footer-shortcuts kbd {
   padding: 0.1rem 0.4rem;
@@ -961,14 +939,12 @@ body.db-theme-dark_yellow .db-voice-cta, body.db-theme-light_yellow .db-voice-ct
 body.db-theme-dark_yellow .db-action-card, body.db-theme-light_yellow .db-action-card, body.db-theme-dark_white .db-action-card,
 body.db-theme-dark_yellow .db-auth-visual, body.db-theme-light_yellow .db-auth-visual, body.db-theme-dark_white .db-auth-visual,
 body.db-theme-dark_yellow .db-central-card, body.db-theme-light_yellow .db-central-card, body.db-theme-dark_white .db-central-card,
-body.db-theme-dark_yellow .db-voice-banner, body.db-theme-light_yellow .db-voice-banner, body.db-theme-dark_white .db-voice-banner,
-body.db-theme-dark_yellow .db-colors-popover, body.db-theme-light_yellow .db-colors-popover, body.db-theme-dark_white .db-colors-popover {
+body.db-theme-dark_yellow .db-voice-banner, body.db-theme-light_yellow .db-voice-banner, body.db-theme-dark_white .db-voice-banner {
   background: var(--db-card-bg) !important; color: var(--db-fg) !important; border-color: var(--db-border) !important; box-shadow: none !important;
 }
 body.db-theme-dark_yellow .db-voice-cta-icon, body.db-theme-light_yellow .db-voice-cta-icon, body.db-theme-dark_white .db-voice-cta-icon,
-body.db-theme-dark_yellow .db-logo-mark, body.db-theme-light_yellow .db-logo-mark, body.db-theme-dark_white .db-logo-mark,
-body.db-theme-dark_yellow .db-alx-mark, body.db-theme-light_yellow .db-alx-mark, body.db-theme-dark_white .db-alx-mark {
-  background: var(--db-accent) !important; color: var(--db-accent-fg) !important; box-shadow: none !important;
+body.db-theme-dark_yellow .db-logo-mark, body.db-theme-light_yellow .db-logo-mark, body.db-theme-dark_white .db-logo-mark {
+  background: none !important; color: var(--db-accent) !important; box-shadow: none !important;
 }
 body.db-theme-dark_yellow .db-logo-name, body.db-theme-light_yellow .db-logo-name, body.db-theme-dark_white .db-logo-name,
 body.db-theme-dark_yellow .db-logo-sub, body.db-theme-light_yellow .db-logo-sub, body.db-theme-dark_white .db-logo-sub,
@@ -1004,8 +980,6 @@ body.db-theme-dark_yellow .db-sidebar-steps li.is-active .db-step-num, body.db-t
   .db-topnav .db-btn, .db-action-card { width: 100%; }
   .db-toolbar { gap: 0.4rem; }
   .db-toolbar .db-btn { flex: 1 1 calc(50% - 0.4rem); justify-content: center; }
-  .db-colors-menu { flex: 1 1 100%; }
-  .db-colors-menu > summary { width: 100%; justify-content: center; }
   .db-main-footer { flex-direction: column; align-items: flex-start; gap: 0.6rem; }
   .db-footer-shortcuts { flex-direction: column; align-items: flex-start; gap: 0.35rem; }
   .db-auth-visual { display: none; }
