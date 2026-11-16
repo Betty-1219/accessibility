@@ -164,3 +164,29 @@ English and Amharic are currently shipped. Additional languages can be added in
 ## License
 
 Open source. Add the project's chosen license here before publishing.
+
+
+## Deployment
+
+The frontend is a static site (Vercel) and the backend is a FastAPI service (Render).
+
+### Frontend (Vercel)
+- Vercel serves the `frontend/` folder as a static site (configured via `vercel.json`, no build step).
+- After deploying the backend, set the API URL in `frontend/index.html`:
+  `<meta name="selampath-api-base" content="https://selampath-api.onrender.com/api/v1" />`
+- Commit and push; Vercel redeploys automatically.
+
+### Backend (Render)
+1. Push this repo to GitHub.
+2. On render.com: **New +** -> **Blueprint**, select this repository (uses `render.yaml`).
+3. When prompted, set `CORS_ORIGINS` to your frontend URL(s), comma-separated,
+   e.g. `https://your-app.vercel.app`.
+4. Deploy. Health check: `https://<service-url>/api/v1/health`.
+
+> Note: the free Render plan has an ephemeral disk, so SQLite data resets on redeploy.
+> Upgrade to Starter and add a persistent disk (mount `/app/data`) to keep data.
+
+### Local development
+- Backend: `cd backend && venv/Scripts/python -m uvicorn app.main:app --port 8000 --reload`
+- Frontend: serve `frontend/` on port 8080 (e.g. `python -m http.server 8080 --directory frontend`).
+- The frontend auto-targets `http://localhost:8000/api/v1` on localhost.

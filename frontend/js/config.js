@@ -1,7 +1,13 @@
 // SelamPath API base resolver. Loaded before the widget so no inline script is needed.
 (function (global) {
-  // Respect an explicit value set by the host page before this script loads.
+  // 1. Explicit value set by the host page before this script loads.
   if (global.SELAMPATH_API_BASE) {
+    return;
+  }
+  // 2. Meta tag override (set content in index.html for production deploys).
+  var meta = document.querySelector('meta[name="selampath-api-base"]');
+  if (meta && meta.content) {
+    global.SELAMPATH_API_BASE = meta.content;
     return;
   }
   var host = global.location.hostname;

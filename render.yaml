@@ -1,0 +1,20 @@
+# Render Blueprint — SelamPath backend (FastAPI)
+# Deploy: push this file to your repo, then "New +" -> "Blueprint" on render.com
+services:
+  - type: web
+    name: selampath-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    plan: free # upgrade to starter if you need a persistent disk for SQLite
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: ENV
+        value: production
+      - key: ENABLE_DOCS
+        value: "true"
+      - key: DB_PATH
+        value: /app/data/digital_bridge.db
+      # Set this to your deployed frontend URL(s), comma-separated,
+      # e.g. https://your-app.vercel.app,https://your-custom-domain
+      - key: CORS_ORIGINS
+        sync: false
