@@ -1360,7 +1360,7 @@
             '<div class="db-auth-main">' + contentHtml + '</div>' +
             '<aside class="db-auth-visual" aria-hidden="true">' +
             '<div class="db-visual-media">' +
-            '<img src="./assets/hero-learner.jpg" alt="" class="db-visual-img" />' +
+            '<img src="./assets/hero-learner.png" alt="" class="db-visual-img" />' +
             '<div class="db-visual-caption"><strong>Inclusive by design.</strong><span>Accessible learning and career pathways for everyone.</span></div>' +
             '</div>' +
             '</aside>' +
