@@ -1257,13 +1257,20 @@
         var tab = this.state.careerTab || "dashboard";
 
         var voiceLabel = this.voiceLoopActive ? "Voice: On" : "Voice guidance";
-        var toolbar =
-          '<div class="db-toolbar" role="toolbar" aria-label="Accessibility controls">' +
+        var toolbarLeft =
+          '<div class="db-toolbar db-toolbar-left" role="toolbar" aria-label="Display tools">' +
+          '<button type="button" class="db-btn" id="db-btn-contrast" title="Change contrast theme" aria-label="Change contrast theme">' +
+          '<span class="db-mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20z" fill="currentColor" stroke="none"/></svg></span>' +
+          esc(this._t("btnContrast")) +
+          "</button>" +
+          '<button type="button" class="db-btn" id="db-btn-lang">' + esc(this._t("btnLang")) + "</button>" +
+          "</div>";
+        var toolbarRight =
+          '<div class="db-toolbar db-toolbar-right" role="toolbar" aria-label="Voice and zoom controls">' +
           '<button type="button" class="db-btn db-btn-voice" id="db-btn-voice-toggle" aria-pressed="' + (this.voiceLoopActive ? "true" : "false") + '">' +
           '<span class="db-mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></span>' +
           '<span class="db-voice-label">' + esc(voiceLabel) + '</span>' +
           "</button>" +
-          '<button type="button" class="db-btn" id="db-btn-lang">' + esc(this._t("btnLang")) + "</button>" +
           '<button type="button" class="db-btn" id="db-btn-zoom-out">' + esc(this._t("btnZoomOut")) + "</button>" +
           '<button type="button" class="db-btn" id="db-btn-zoom-in">' + esc(this._t("btnZoomIn")) + " (" +
           esc(Math.max(80, Math.min(200, Number(d.preferences.zoom_percent) || 100))) + "%)</button>" +
@@ -1318,7 +1325,8 @@
           '<span class="db-logo-mark" aria-hidden="true">X</span>' +
           '<div class="db-logo-text"><span class="db-logo-name">SelamPath</span><span class="db-logo-sub">Career Gateway</span></div>' +
           '</div>' +
-          toolbar +
+          toolbarLeft +
+          toolbarRight +
           '</header>';
 
         var mainFooter =
@@ -2093,6 +2101,9 @@
       });
       on("#db-btn-lang", function () {
         self._handleLanguageChoice(self.lang === "en" ? "am" : "en");
+      });
+      on("#db-btn-contrast", function () {
+        self._cycleContrast();
       });
       on("#db-first-contrast", function () {
         self._cycleContrast();
