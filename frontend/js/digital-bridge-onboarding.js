@@ -1799,10 +1799,15 @@
       }
 
       return (
-                  '<h2 id="db-step-heading" tabindex="-1">Welcome to AccessPath, ' +
+                  '<section class="db-dash-hero">' +
+        '<div class="db-dash-hero-text">' +
+        '<h2 id="db-step-heading" tabindex="-1">Welcome to AccessPath, ' +
         esc(this.state.data.full_name) +
         "</h2>" +
         '<p class="db-card-lead">Your career workspace. Track your roadmap progress, build skills, and turn your journey into a Career Passport employers can trust.</p>' +
+        "</div>" +
+        '<img src="./assets/hero-learner.png" alt="" class="db-dash-hero-img" aria-hidden="true" />' +
+        "</section>" +
         '<div class="db-grid">' +
         '<section class="db-card">' +
         '<h3>Selected Career &amp; Progress</h3>' +

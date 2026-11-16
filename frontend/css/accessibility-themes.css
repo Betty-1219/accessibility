@@ -901,6 +901,37 @@ body.db-theme-dark_yellow .db-sidebar-step, body.db-theme-light_yellow .db-sideb
 .db-profile-row { margin: 0.25rem 0; }
 .db-apply-form { margin-top: 1rem; }
 
+/* Dashboard welcome band with brand cutout */
+.db-dash-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.5rem 1.75rem;
+  margin-bottom: 1.25rem;
+  background: linear-gradient(120deg, #ffffff 55%, #fff7f2 100%);
+  border: 1px solid #ffe3cf;
+  border-radius: 16px;
+  box-shadow: var(--db-shadow-soft);
+  overflow: hidden;
+}
+.db-dash-hero-text { min-width: 0; }
+.db-dash-hero-text h2 { margin-bottom: 0.35rem; }
+.db-dash-hero-text .db-card-lead { margin-bottom: 0; }
+.db-dash-hero-img {
+  width: 132px;
+  height: auto;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 12px 22px rgba(17,24,39,0.16));
+}
+@media (max-width: 760px) {
+  .db-dash-hero { padding: 1.25rem; }
+  .db-dash-hero-img { width: 96px; }
+}
+@media (max-width: 560px) {
+  .db-dash-hero-img { display: none; }
+}
+
 /* Auth / registration layout */
 .db-auth-layout {
   display: grid;
@@ -1017,6 +1048,7 @@ body.db-theme-dark_yellow .db-topnav .db-btn, body.db-theme-light_yellow .db-top
 body.db-theme-dark_yellow .db-voice-cta, body.db-theme-light_yellow .db-voice-cta, body.db-theme-dark_white .db-voice-cta,
 body.db-theme-dark_yellow .db-action-card, body.db-theme-light_yellow .db-action-card, body.db-theme-dark_white .db-action-card,
 body.db-theme-dark_yellow .db-central-card, body.db-theme-light_yellow .db-central-card, body.db-theme-dark_white .db-central-card,
+body.db-theme-dark_yellow .db-dash-hero, body.db-theme-light_yellow .db-dash-hero, body.db-theme-dark_white .db-dash-hero,
 body.db-theme-dark_yellow .db-voice-banner, body.db-theme-light_yellow .db-voice-banner, body.db-theme-dark_white .db-voice-banner {
   background: var(--db-card-bg) !important; color: var(--db-fg) !important; border-color: var(--db-border) !important; box-shadow: none !important;
 }
